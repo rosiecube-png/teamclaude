@@ -4,13 +4,13 @@ Requirements for turning the local proxy into a multi-tenant hosted service.
 
 Every architectural claim below is **measured**, not assumed: a real Claude Code process
 was driven through a proxy and the handshakes and request paths were observed. Findings
-are numbered `F01`–`F13` and referenced from the requirements that rest on them. The two
-items that could not be measured are recorded as open rather than filled in with a guess.
+are numbered `F01`–`F18` and referenced from the requirements that rest on them. What
+could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Measured | 13 |
-| Open | 1 |
+| Measured | 18 |
+| Open | 2 — client platform coverage, see §8.4 |
 | Backlog | 1 — egress IP, see §5 |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
 | Pull requests | [#1](../../pull/1), [#2](../../pull/2), [#10](../../pull/10) |
@@ -46,26 +46,43 @@ no shell wrapper, no system trust-store installation. This was measured, not ass
 | **F02** | Is an `https://` scheme proxy URL supported? | **Yes** — outer TLS → CONNECT → inner TLS all succeed | 2.1.223, 2.1.193 |
 | **F03** | What actually causes the reported `https://` proxy failure? | **Misdiagnosis** — not TLS-in-TLS; the proxy certificate lacked the connect hostname in its SAN | Windows |
 | **F04** | Can the proxy be configured purely from the `env` block of `settings.json`? | **Yes** — no shell variables, no wrapper | project scope |
-| **F05** | Can 100% of traffic be captured? | **No** — one `/api/eval/*` request fires before settings load and bypasses the proxy | isolated by experiment |
+| **F05** | Can 100% of traffic be captured from `settings.json` alone? | **No** — one `/api/eval/*` request fires before settings load and bypasses the proxy. Superseded by F14 | isolated by experiment |
 | **F06** | Does mTLS coverage vary by client version? | **Yes** — 2.1.193 omits it on bootstrap paths, but **both** versions send it on `/v1/messages` | 2.1.223 vs 2.1.193 |
 | **F07** | Cost of an nginx `stream` passthrough in front? | **None** — 5.00 s vs 5.01 s direct | Linux |
 | **F08** | Does device mTLS survive an edge that terminates the outer TLS? | **Yes** — public cert at the edge, plaintext CONNECT to the backend, certificate still arrives | Linux, public path |
-| **F09** | Is restricting CONNECT to the upstream host safe? | **Yes** — refusing telemetry-host CONNECTs left the client working normally | 2.1.223 |
+| **F09** | Is refusing a non-upstream CONNECT safe? | **For telemetry hosts, yes** — the client carried on. Does **not** extend to every host: `downloads.claude.ai` carries plugin and self-update traffic and was never part of that test | 2.1.223 |
 | **F10** | How much traffic gets an account token injected today? | **Too much** — 8 of 12 observed paths, including account-scoped state | live capture |
 | **F11** | Does Linux behave differently from Windows? | **No** — identical results | Ubuntu 24.04 |
 | **F12** | Is the proxy→upstream leg the latency bottleneck? | **No** — the server leg was slightly faster than a local direct connection | TTFB |
 | **F13** | Is remote operation already in scope for this project? | **Yes** — `proxy.host` + `proxy.apiKey` are already documented for off-box clients | code + docs |
+| **F14** | Can 100% of traffic be captured at all? | **Yes** — shell env covers the pre-settings window, `settings.json` covers everything after. Both set: **9 of 9** observed paths | 2.1.223 |
+| **F15** | Does shell env reach a background agent? | **Yes** — the supervisor cold-started from that shell inherits it; `/v1/messages` included | 2.1.223 |
+| **F16** | Does a **project**-scope `settings.json` reach a background agent? | **No** — the agent ran to completion with **zero** proxy traffic. It went direct | 2.1.223 |
+| **F17** | Does a **user**-scope `settings.json` reach a background agent? | **Yes** — 33 CONNECTs arrived, and none on the shell listener | 2.1.223 |
+| **F18** | Does the upstream allow one account in concurrent sessions? | **Yes** — five concurrent sessions observed on one account, several mid-request | production use |
 
-### The choice F05 forces
+### What F14–F17 settle: how the client must be configured
 
-Putting the proxy URL in `settings.json` means every request that *reaches* the proxy
-carries the device certificate — so strict mTLS enforcement is viable. The cost is that
-one request per session bypasses the proxy entirely. Supplying it through shell
-environment variables captures that request, but it then arrives without a certificate.
+F05 read as a trade-off between capture and authentication. Measuring the remaining
+combinations dissolved it — the two injection methods cover **different windows**, so
+setting both is strictly better than either.
 
-**Full capture and strict mTLS cannot both be had.** This is a product decision.
-Recommended: `settings.json` plus mTLS enforced only on the rotation path — which also
-removes the version dependency in F06.
+| | Pre-settings window | After settings load | Background agents |
+| --- | --- | --- | --- |
+| Shell environment | ✅ | ✅ | ✅ (F15) |
+| `settings.json`, **project** scope | ✗ | ✅ | ❌ **bypasses** (F16) |
+| `settings.json`, **user** scope | ✗ | ✅ | ✅ (F17) |
+
+**Requirement.** The enrollment script must write **both**:
+
+1. `~/.claude/settings.json` — **user scope**. Project scope is not a weaker option, it is
+   a silent hole: a background agent configured that way ran to completion having reached
+   the upstream directly (F16).
+2. A shell `export` — covers the window before settings are read.
+
+Together: 9 of 9 observed paths captured (F14).
+
+mTLS is enforced **on the rotation path**, not at the TLS layer — see §8.1.
 
 ---
 
@@ -188,8 +205,8 @@ the next one's design.
 | **P3** | Control plane: signup, OAuth enrollment, re-auth flow, dashboard, billing, per-tenant observability. | [#7](../../issues/7) |
 | **P4** | Rewrite the compliance documentation. | release gate — legal review advised |
 
-Before P1, settle the items in [§8](#8-to-settle-before-building) — an undecided product
-question and an untrustworthy verification loop both distort the requirements they feed.
+[§8](#8-to-settle-before-building) tracks what was settled before P1 and the two client
+coverage gaps that remain open. Neither blocks P1.
 
 On P4: [`docs/compliance.md`](compliance.md) currently states the project is *"a
 self-hosted local proxy… **not** a hosted service"* that *"never routes requests on behalf
@@ -222,76 +239,70 @@ on another account, so this cannot be avoided.
 
 ## 8. To settle before building
 
-Four things are unsettled in a way that would distort the requirements built on top of
-them. None is large; all are cheaper to fix now than to discover downstream.
+### 8.1 mTLS enforcement point — settled
 
-### 8.1 Decide the capture-vs-mTLS question — blocks [#6](../../issues/6)
+Enforce mTLS **on the rotation path**, not at the TLS layer.
 
-F05 leaves a genuine product choice open, and both the client requirements and the mTLS
-enforcement design follow from it:
+Both work on a current client (F14, F17). The rotation path is the durable one:
+TLS-layer enforcement fails closed for *every* request the moment a release changes which
+paths carry a certificate, and F03 and F06 both found behaviour moving between releases in
+exactly this area. Per-request enforcement degrades instead of locking everyone out, and
+it is the check that matters — the rotation path is the only one that spends an account.
 
-| | Proxy URL in `settings.json` | Proxy URL in shell environment |
-| --- | --- | --- |
-| Early `/api/eval/*` request | bypasses the proxy | captured |
-| Everything reaching the proxy | carries a device certificate | one request arrives without one |
-| Strict mTLS at the TLS layer | viable | breaks that request |
+Unblocks [#6](../../issues/6).
 
-Measured on the current release. The older version tested (F06) omits the certificate on
-bootstrap paths, but **old clients are out of support** — see §8.5 — so that column no
-longer needs to hold across versions.
+### 8.2 Verification loop — done
 
-Recommended: `settings.json`, with mTLS enforced **on the rotation path** rather than at
-the TLS layer. Both work on a current client; the rotation path is the more durable of
-the two. TLS-layer enforcement fails closed for *every* request the moment a client
-release changes which paths carry a certificate — and F03 and F06 both show that behaviour
-moving between releases. Per-request enforcement degrades instead of locking everyone out,
-and it is the check that actually matters, since the rotation path is the only one that
-spends an account.
+Fixed in [#12](../../pull/12): the tests no longer inherit ambient `HTTP(S)_PROXY`, and
+the suite carries a per-test timeout. CI is green on Linux across Node 20, 22 and 24, and
+runs automatically on push and pull request.
 
-**Until this is decided, [#6](../../issues/6) cannot be specified.**
+### 8.3 Compliance documentation — done
 
-### 8.2 Make the verification loop trustworthy — [#9](../../issues/9)
+Scoped to the local proxy in [#13](../../pull/13), pointing here. The full rewrite stays
+release-gate work (P4) and wants legal review.
 
-Two problems, both found while running the suite for the P0 changes:
+### 8.4 Enforce a minimum client version — open
 
-- Tests inherit ambient `HTTP(S)_PROXY` and fail for unrelated reasons. Anyone who runs
-  the suite while using this proxy sees red tests caused by their own environment.
-- The suite can hang without a per-test timeout.
-
-There is also **no CI running on this fork**, so P0 was verified by hand. P1 is a large
-refactor of shared state; doing it without a trustworthy signal is how silent regressions
-land. Fix the isolation bug and enable Actions before starting it.
-
-### 8.3 Reconcile the compliance documentation
-
-[`docs/compliance.md`](compliance.md) currently asserts three things that a hosted
-deployment inverts. Leaving it in place while building the opposite makes the repository
-self-contradictory, and it is the document a reader consults first. Rewriting is P4 work,
-but a note marking it as superseded belongs there now.
-
-### 8.4 Enforce a minimum client version — new requirement
-
-Supporting only current clients is a deliberate decision, and it closes the version gap
-in §8.1. But in a hosted product users install their own client, so "we only use the
-latest" is not something the operator observes — it has to be **enforced**, or an old
-client silently gets a worse contract than the one the design assumes.
+Supporting only current clients is a deliberate decision. In a hosted product users
+install their own client, so "we only run the latest" is not something the operator
+observes — it has to be **enforced**, or an old client silently gets a worse contract than
+the design assumes.
 
 | Requirement | Note |
 | --- | --- |
-| Minimum supported version, published | Below it, refuse with an error that names the version and how to update |
-| Detect the client version per request | The user agent is the obvious carrier; confirm it is present on the rotation path |
-| Version canary before adopting a new release | F03 and F06 both found behaviour moving between releases in exactly the area this design depends on. A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it |
+| Minimum supported version, published | Below it, refuse with an error naming the version and how to update |
+| Detect the client version per request | The user agent is the obvious carrier; confirm it reaches the rotation path |
+| Version canary before adopting a release | A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it |
 
-The canary is the durable half. Pinning to "latest" removes the *old*-client problem and
-replaces it with a *new*-client one: the client can change under the service at any time,
-and the measurements this document rests on have a shelf life.
+The canary is the durable half. Pinning to "latest" trades an old-client problem for a
+new-client one: the client can change under the service at any time, so the measurements
+here have a shelf life.
 
-### 8.5 Close the client-platform gap
+Not yet tracked as an issue.
 
-The thin-client claim (§1) rests on F01, F04 and F08, measured on **Windows and Linux
-only**. macOS is unmeasured, and the harness is directly reusable, so this is an
-afternoon rather than a project. Also unmeasured: interactive mode, background agents,
-and nesting behind an existing corporate proxy. Each could add a client requirement.
+### 8.5 Client platform coverage — open
+
+The thin-client claim (§1) is measured on **Windows and Linux**, in `-p` and background
+modes (F01–F04, F08, F14–F17). Two axes remain, both needing a machine or terminal this
+work did not have:
+
+- **macOS** — the harness is directly reusable; an afternoon, not a project
+- **Interactive mode** — every run was `-p` or `--bg`; request patterns may differ
+
+Either could add a client requirement. Neither can change the architecture.
+
+### 8.6 Corporate proxy — a limitation, not a gap
+
+A client behind an **explicit** corporate proxy cannot use a hosted MITM proxy.
+`HTTPS_PROXY` holds one value, and Claude Code has no proxy-chaining setting, so a user
+who must traverse a corporate proxy to reach the internet has nowhere to put ours.
+Transparent, network-level corporate proxies are unaffected.
+
+The reverse direction — teamclaude itself reaching upstream through another proxy — is
+already supported and covered by the existing `upstream-proxy` tests.
+
+Record this as a documented limitation rather than something to solve.
 
 ---
 
@@ -328,17 +339,19 @@ Repeat across the environment axes: client version, injection method (shell vs
 ### Axes not measured
 
 - macOS — the harness is directly reusable
-- Interactive mode — request patterns may differ from `-p`
-- Background agents — not run, to avoid leaving a supervisor daemon behind
-- Nesting behind an existing corporate proxy
-- Session collisions when several machines use one account concurrently
+- Interactive mode — every run was `-p` or `--bg`; request patterns may differ
+
+Both are §8.5. Everything else once listed here has since been measured or resolved:
+background agents (F15–F17), concurrent sessions on one account (F18), and corporate
+proxy nesting (§8.6, a limitation rather than an open question).
 
 ### Findings resting on a single observation
 
 Recorded so they are not mistaken for the multi-environment results above:
 
-- **F09** (refusing non-upstream CONNECTs is safe) — observed on one `-p` run. Long or
-  interactive sessions may reach for hosts that run was never going to touch.
-- **`/api/eval/*` when fully blocked** — the harness answered it locally with a canned
-  `200` and the client proceeded. Returning `403` instead was not tried, so "safe to
-  refuse outright" is not established.
+- **F09** — refusing *telemetry* CONNECTs was observed safe on one `-p` run. It does not
+  generalise: `downloads.claude.ai` carries plugin and self-update traffic, and a
+  background agent reaches for it. The allowlist in [#8](../../issues/8) has to be
+  composed from what the client actually needs, not assumed from this one result.
+- **F12** — latency was compared on one network path. Useful as a direction, not a number
+  to plan capacity from.
