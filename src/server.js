@@ -238,6 +238,40 @@ export function relayHttpForward(req, res) {
 
 const CLIENT_CREDENTIAL_PATHS = ['/v1/code/', '/api/oauth/files/', '/api/oauth/file_upload'];
 
+// The endpoints that actually spend an account: they carry a prompt and draw on
+// the 5h/7d quota buckets, so they are the ones rotation exists for.
+//
+// Everything else Claude Code sends upstream is account-scoped *state* —
+// `/api/oauth/account/settings`, `/api/claude_cli/bootstrap`, `/v1/mcp_servers`,
+// `/mcp-registry/*`, `/api/event_logging/*` and friends. Injecting a rotated
+// token there answers them for whichever account rotation happened to pick,
+// which on a single-user proxy is invisible (that account IS the user) but
+// returns another identity's settings and MCP list once more than one person's
+// accounts share a proxy.
+const ROTATED_PATHS = [
+  /^\/v1\/messages(?:\/count_tokens)?(?:\?|$)/,
+  /^\/v1\/complete(?:\?|$)/,
+];
+
+/** Does this path need a rotated account token (vs. the client's own identity)? */
+export function needsAccountRotation(url) {
+  return ROTATED_PATHS.some((re) => re.test(url || ''));
+}
+
+/**
+ * Does the client carry a credential upstream would accept?
+ *
+ * Only `authorization` counts. A client `x-api-key` is the *proxy's* key (that
+ * is what the auth gate checks), not an Anthropic one — forwarding it would
+ * turn a working request into a 401. Claude Code always sends its own
+ * `authorization: Bearer …` in both base-URL and MITM mode, so it qualifies;
+ * a bare API caller that relies on the proxy to supply credentials does not,
+ * and keeps the pre-existing inject-and-rotate behavior.
+ */
+export function hasClientCredential(req) {
+  return !!req?.headers?.['authorization'];
+}
+
 /**
  * Build the core proxy request listener — buffer the body, then forward with
  * account selection + retry (forwardRequest). Shared by the base HTTP server and
@@ -294,6 +328,17 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
       // paired identity, so fetching them with a rotated token 403s and Claude
       // Code silently drops the image from the message.
       if (CLIENT_CREDENTIAL_PATHS.some((p) => (req.url || '').startsWith(p))) { await relayStream(req, res, upstream, sx); return; }
+
+      // Non-inference endpoints follow the CLIENT's identity when it has one, so
+      // account-scoped state (settings, bootstrap, MCP lists, telemetry) is never
+      // answered for whichever account rotation picked. Gated on the client
+      // actually holding a credential: without one there is nothing to forward,
+      // so those callers keep the previous inject-and-rotate path rather than
+      // getting a 401. See needsAccountRotation / hasClientCredential.
+      if (!needsAccountRotation(req.url) && hasClientCredential(req)) {
+        await relayStream(req, res, upstream, sx);
+        return;
+      }
 
       // Account pin: a request to `/tc-acct/<name-or-index>/...` (e.g. via
       // ANTHROPIC_BASE_URL=http://host:port/tc-acct/deepseek) is forced onto that
