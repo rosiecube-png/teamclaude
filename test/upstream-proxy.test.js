@@ -11,6 +11,14 @@ import { upstreamFetch, proxyFetch } from '../src/upstream-fetch.js';
 
 test.afterEach(() => resetUpstreamProxy());
 
+// resolveUpstreamProxy falls back to process.env when no env is passed, so a
+// test that omits it inherits whatever proxy variables the developer's shell
+// happens to carry — including the NO_PROXY that `teamclaude env` itself sets,
+// which bypasses 127.0.0.1 and makes the tunnelling tests below see no traffic.
+// Pass this instead of relying on the default: these tests are about the config
+// they state, not the machine they run on.
+const NO_ENV = {};
+
 // ── Parsing ──────────────────────────────────────────────────
 
 test('parses the forms people actually write', () => {
@@ -85,7 +93,7 @@ test('upstreamProxy:false opts out of the environment entirely', () => {
 });
 
 test('proxyForHost applies NO_PROXY', () => {
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: 'p:3128', noProxy: 'internal.example' }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: 'p:3128', noProxy: 'internal.example' }, NO_ENV));
   assert.equal(proxyForHost('api.anthropic.com').host, 'p');
   assert.equal(proxyForHost('svc.internal.example'), null);
 });
@@ -143,7 +151,7 @@ test('an upstream request is tunneled through the configured proxy', async () =>
   const { server: proxy, targets } = connectProxy();
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }, NO_ENV));
 
   try {
     const res = await upstreamFetch(`http://127.0.0.1:${originPort}/v1/messages`, { method: 'GET', headersTimeoutMs: 8000 });
@@ -162,7 +170,7 @@ test('proxy credentials are offered as Proxy-Authorization', async () => {
   const { server: proxy, auth } = connectProxy();
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `http://bob:s3cret@127.0.0.1:${proxyPort}` }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `http://bob:s3cret@127.0.0.1:${proxyPort}` }, NO_ENV));
 
   try {
     await upstreamFetch(`http://127.0.0.1:${originPort}/x`, { method: 'GET', headersTimeoutMs: 8000 });
@@ -184,7 +192,7 @@ test('control-plane calls (oauth) are tunneled too', async () => {
   const { server: proxy, targets } = connectProxy();
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }, NO_ENV));
 
   try {
     const res = await proxyFetch(`http://127.0.0.1:${originPort}/oauth/token`, { method: 'POST', body: '{}', headersTimeoutMs: 8000 });
@@ -204,7 +212,7 @@ test('a bypassed host goes direct even with a proxy configured', async () => {
   const { server: proxy, targets } = connectProxy();
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}`, noProxy: '127.0.0.1' }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}`, noProxy: '127.0.0.1' }, NO_ENV));
 
   try {
     const res = await upstreamFetch(`http://127.0.0.1:${originPort}/x`, { method: 'GET', headersTimeoutMs: 8000 });
@@ -224,7 +232,7 @@ test('an AbortSignal still cancels a tunneled request', async () => {
   const { server: proxy } = connectProxy();
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }, NO_ENV));
 
   try {
     await assert.rejects(
@@ -244,7 +252,7 @@ test('a refused CONNECT names the upstream proxy', async () => {
   proxy.on('connect', (_req, sock) => { sock.write('HTTP/1.1 403 Forbidden\r\n\r\n'); sock.end(); });
   const proxyPort = await listen(proxy);
 
-  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }));
+  setUpstreamProxy(resolveUpstreamProxy({ upstreamProxy: `127.0.0.1:${proxyPort}` }, NO_ENV));
 
   try {
     await assert.rejects(
