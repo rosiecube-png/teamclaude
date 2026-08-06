@@ -233,20 +233,22 @@ enforcement design follow from it:
 | | Proxy URL in `settings.json` | Proxy URL in shell environment |
 | --- | --- | --- |
 | Early `/api/eval/*` request | bypasses the proxy | captured |
-| Everything reaching the proxy | carries a device certificate — **on 2.1.223** | one request arrives without one |
-| Strict mTLS at the TLS layer | viable **on 2.1.223** | breaks that request |
+| Everything reaching the proxy | carries a device certificate | one request arrives without one |
+| Strict mTLS at the TLS layer | viable | breaks that request |
 
-> **Measurement gap.** The `settings.json` column was measured on 2.1.223 only; the
-> 2.1.193 × `settings.json` combination was never run. Since F06 shows 2.1.193 omits the
-> certificate on bootstrap paths entirely, those requests would most likely still reach
-> the proxy without one — so "strict TLS-layer enforcement is viable" probably does **not**
-> generalise across versions. Either close the gap, or do not rely on TLS-layer
-> enforcement.
+Measured on the current release. The older version tested (F06) omits the certificate on
+bootstrap paths, but **old clients are out of support** — see §8.5 — so that column no
+longer needs to hold across versions.
 
-Recommended regardless: `settings.json`, with mTLS enforced **only on the rotation path**
-rather than at the TLS layer. That is the one shape both measured versions support, since
-`/v1/messages` carried the certificate on each. **Until this is decided,
-[#6](../../issues/6) cannot be specified.**
+Recommended: `settings.json`, with mTLS enforced **on the rotation path** rather than at
+the TLS layer. Both work on a current client; the rotation path is the more durable of
+the two. TLS-layer enforcement fails closed for *every* request the moment a client
+release changes which paths carry a certificate — and F03 and F06 both show that behaviour
+moving between releases. Per-request enforcement degrades instead of locking everyone out,
+and it is the check that actually matters, since the rotation path is the only one that
+spends an account.
+
+**Until this is decided, [#6](../../issues/6) cannot be specified.**
 
 ### 8.2 Make the verification loop trustworthy — [#9](../../issues/9)
 
@@ -267,7 +269,24 @@ deployment inverts. Leaving it in place while building the opposite makes the re
 self-contradictory, and it is the document a reader consults first. Rewriting is P4 work,
 but a note marking it as superseded belongs there now.
 
-### 8.4 Close the client-platform gap
+### 8.4 Enforce a minimum client version — new requirement
+
+Supporting only current clients is a deliberate decision, and it closes the version gap
+in §8.1. But in a hosted product users install their own client, so "we only use the
+latest" is not something the operator observes — it has to be **enforced**, or an old
+client silently gets a worse contract than the one the design assumes.
+
+| Requirement | Note |
+| --- | --- |
+| Minimum supported version, published | Below it, refuse with an error that names the version and how to update |
+| Detect the client version per request | The user agent is the obvious carrier; confirm it is present on the rotation path |
+| Version canary before adopting a new release | F03 and F06 both found behaviour moving between releases in exactly the area this design depends on. A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it |
+
+The canary is the durable half. Pinning to "latest" removes the *old*-client problem and
+replaces it with a *new*-client one: the client can change under the service at any time,
+and the measurements this document rests on have a shelf life.
+
+### 8.5 Close the client-platform gap
 
 The thin-client claim (§1) rests on F01, F04 and F08, measured on **Windows and Linux
 only**. macOS is unmeasured, and the harness is directly reusable, so this is an
@@ -308,8 +327,6 @@ Repeat across the environment axes: client version, injection method (shell vs
 
 ### Axes not measured
 
-- **2.1.193 × `settings.json`** — the one combination that decides whether TLS-layer mTLS
-  enforcement generalises across versions. See §8.1
 - macOS — the harness is directly reusable
 - Interactive mode — request patterns may differ from `-p`
 - Background agents — not run, to avoid leaving a supervisor daemon behind
