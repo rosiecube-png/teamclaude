@@ -2,6 +2,8 @@
 
 > This is the maintainer's good-faith understanding, **not legal advice.** Anthropic's Terms are theirs to interpret and to change; read the current [Claude Code legal terms](https://code.claude.com/docs/en/legal-and-compliance) and decide for yourself.
 
+> **This page describes the local proxy only.** A hosted deployment is being scoped in [saas-requirements.md](saas-requirements.md), and it inverts all three claims in the paragraph below: it *is* a hosted service, it *does* hold credentials on someone else's machine, and it *does* route requests on behalf of people other than the operator. Nothing here has been rewritten for that yet — treat this page as describing self-hosted use, and see [§7 of the requirements](saas-requirements.md#7-data-protection) for what a hosted deployment would additionally have to answer for.
+
 TeamClaude is a **self-hosted local proxy**. You run it on your own machine, it holds *your own* credentials, and it forwards the requests that *your own* Claude Code CLI makes to Anthropic. It is **not** a hosted service, it does not offer "Claude.ai login" to anyone, and it never routes requests on behalf of third parties — it only moves your own traffic through accounts you control.
 
 How you use it is your responsibility. In particular:
