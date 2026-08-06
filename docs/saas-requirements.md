@@ -233,12 +233,20 @@ enforcement design follow from it:
 | | Proxy URL in `settings.json` | Proxy URL in shell environment |
 | --- | --- | --- |
 | Early `/api/eval/*` request | bypasses the proxy | captured |
-| Everything reaching the proxy | carries a device certificate | one request arrives without one |
-| Strict mTLS at the TLS layer | viable | breaks that request |
+| Everything reaching the proxy | carries a device certificate — **on 2.1.223** | one request arrives without one |
+| Strict mTLS at the TLS layer | viable **on 2.1.223** | breaks that request |
 
-Recommended: `settings.json`, with mTLS enforced only on the rotation path. That also
-dissolves the version dependency in F06. **Until this is decided, [#6](../../issues/6)
-cannot be specified.**
+> **Measurement gap.** The `settings.json` column was measured on 2.1.223 only; the
+> 2.1.193 × `settings.json` combination was never run. Since F06 shows 2.1.193 omits the
+> certificate on bootstrap paths entirely, those requests would most likely still reach
+> the proxy without one — so "strict TLS-layer enforcement is viable" probably does **not**
+> generalise across versions. Either close the gap, or do not rely on TLS-layer
+> enforcement.
+
+Recommended regardless: `settings.json`, with mTLS enforced **only on the rotation path**
+rather than at the TLS layer. That is the one shape both measured versions support, since
+`/v1/messages` carried the certificate on each. **Until this is decided,
+[#6](../../issues/6) cannot be specified.**
 
 ### 8.2 Make the verification loop trustworthy — [#9](../../issues/9)
 
@@ -300,8 +308,20 @@ Repeat across the environment axes: client version, injection method (shell vs
 
 ### Axes not measured
 
+- **2.1.193 × `settings.json`** — the one combination that decides whether TLS-layer mTLS
+  enforcement generalises across versions. See §8.1
 - macOS — the harness is directly reusable
 - Interactive mode — request patterns may differ from `-p`
 - Background agents — not run, to avoid leaving a supervisor daemon behind
 - Nesting behind an existing corporate proxy
 - Session collisions when several machines use one account concurrently
+
+### Findings resting on a single observation
+
+Recorded so they are not mistaken for the multi-environment results above:
+
+- **F09** (refusing non-upstream CONNECTs is safe) — observed on one `-p` run. Long or
+  interactive sessions may reach for hosts that run was never going to touch.
+- **`/api/eval/*` when fully blocked** — the harness answered it locally with a canned
+  `200` and the client proceeded. Returning `403` instead was not tried, so "safe to
+  refuse outright" is not established.
