@@ -10,9 +10,10 @@ items that could not be measured are recorded as open rather than filled in with
 | | |
 | --- | --- |
 | Measured | 13 |
-| Open | 2 |
+| Open | 1 |
+| Backlog | 1 — egress IP, see §5 |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
-| Pull requests | [#1](../../pull/1), [#2](../../pull/2) |
+| Pull requests | [#1](../../pull/1), [#2](../../pull/2), [#10](../../pull/10) |
 
 ---
 
@@ -140,28 +141,6 @@ flowchart LR
 
 ## 5. Open items
 
-### Egress IP treatment — [#3](../../issues/3)
-
-The one remaining structural unknown: how the upstream treats the **source IP** of a
-request. Locally that is one consumer line carrying one person's accounts. Hosted, it
-becomes a datacenter address carrying several people's accounts.
-
-| Failure mode | Impact |
-| --- | --- |
-| Limits keyed to the IP | **Breaks the premise** — pooling accounts yields no multiple if the IP is the ceiling |
-| Refusal of an unfamiliar origin | The client reads it as a dead session and asks for re-login |
-| Shared-IP blast radius | One tenant's usage affects everyone behind the address |
-
-> **Mitigations already exist in the codebase.** `egress.pin` holds a request rather than
-> sending it from an unexpected address, and `sx.mode: "429"` retries through a different
-> egress when a limit looks IP-keyed. That those two features were built at all is
-> evidence the concern is real — and it also means a bad result is a **bandwidth cost**
-> question rather than an architecture rewrite.
-
-Measure in escalating order of risk: unauthenticated request (no risk) → API-key account
-(no risk) → spare OAuth account, low volume (low) → spare accounts under load (medium).
-The third step already answers "is it usable". **Do not use a primary account.**
-
 ### OAuth `redirect_uri` policy — [#7](../../issues/7)
 
 Whether a hosted callback URI is accepted is unconfirmed. An unauthenticated probe cannot
@@ -170,6 +149,29 @@ localhost baseline that is known to work. It needs a real browser session.
 
 Low priority — the paste-the-code flow works either way, so this only decides whether the
 dashboard can offer a smoother redirect.
+
+### Backlog — egress IP treatment — [#3](../../issues/3)
+
+How the upstream treats the **source IP** of a request. Locally that is one consumer line
+carrying one person's accounts; hosted, it becomes a datacenter address carrying several
+people's accounts. `docs/proxy-modes.md` notes that some limits key on the outbound IP
+rather than the account, which is what makes it a question at all.
+
+**Deliberately out of scope for the build.** Three reasons:
+
+1. **Nothing is built from the answer.** The mitigations already exist — `egress.pin`
+   holds a request rather than sending it from an unexpected address, and
+   `sx.mode: "429"` retries through a different egress. A bad result turns a config flag
+   on; it does not change the architecture.
+2. **No design depends on it.** Every architectural question is settled by F01–F13.
+3. **A complete answer is not obtainable yet.** A cheap check — point `upstreamProxy` at
+   a proxy on a cloud host and keep using the existing setup — only exercises *one
+   person's* accounts behind one address. The concern is *several people's* accounts
+   sharing one, which cannot be observed before real multi-tenant traffic exists. So it
+   cannot be a prerequisite for the work that produces that traffic.
+
+Revisit as a deployment checklist item: set `upstreamProxy`, use it normally, and watch
+whether rotation still clears a limit.
 
 ---
 
@@ -180,14 +182,16 @@ the next one's design.
 
 | Phase | Work | Gate |
 | --- | --- | --- |
-| **P0** | TLS listener and rotation scope. Both fix defects in the current product independently of any hosting plan. | [PR #1](../../pull/1), [PR #2](../../pull/2) — submitted, no regressions |
-| **P1** | Egress measurement. A bad result puts residential-egress cost in the estimate, or at worst reopens the local-agent design. | cloud VM + spare account |
-| **P2** | Dismantle single-tenancy: config store to a database, per-tenant `AccountManager`, distributed locking. Most later work is blocked on this. | [#4](../../issues/4) |
-| **P3** | Security boundary: per-tenant CA and key custody, mTLS device auth, hosted hardening. | [#5](../../issues/5), [#6](../../issues/6), [#8](../../issues/8) — security review |
-| **P4** | Control plane: signup, OAuth enrollment, re-auth flow, dashboard, billing, per-tenant observability. | [#7](../../issues/7) |
-| **P5** | Rewrite the compliance documentation. | release gate — legal review advised |
+| **P0** | TLS listener and rotation scope. Both fix defects in the current product independently of any hosting plan. | [#1](../../pull/1), [#2](../../pull/2) — merged |
+| **P1** | Dismantle single-tenancy: config store to a database, per-tenant `AccountManager`, distributed locking. Most later work is blocked on this. | [#4](../../issues/4) |
+| **P2** | Security boundary: per-tenant CA and key custody, mTLS device auth, hosted hardening. | [#5](../../issues/5), [#6](../../issues/6), [#8](../../issues/8) — security review |
+| **P3** | Control plane: signup, OAuth enrollment, re-auth flow, dashboard, billing, per-tenant observability. | [#7](../../issues/7) |
+| **P4** | Rewrite the compliance documentation. | release gate — legal review advised |
 
-On P5: [`docs/compliance.md`](compliance.md) currently states the project is *"a
+Before P1, settle the items in [§8](#8-to-settle-before-building) — an undecided product
+question and an untrustworthy verification loop both distort the requirements they feed.
+
+On P4: [`docs/compliance.md`](compliance.md) currently states the project is *"a
 self-hosted local proxy… **not** a hosted service"* that *"never routes requests on behalf
 of third parties"*. All three claims invert, so the page needs rewriting rather than
 amending.
@@ -216,7 +220,55 @@ on another account, so this cannot be avoided.
 
 ---
 
-## 8. Appendix
+## 8. To settle before building
+
+Four things are unsettled in a way that would distort the requirements built on top of
+them. None is large; all are cheaper to fix now than to discover downstream.
+
+### 8.1 Decide the capture-vs-mTLS question — blocks [#6](../../issues/6)
+
+F05 leaves a genuine product choice open, and both the client requirements and the mTLS
+enforcement design follow from it:
+
+| | Proxy URL in `settings.json` | Proxy URL in shell environment |
+| --- | --- | --- |
+| Early `/api/eval/*` request | bypasses the proxy | captured |
+| Everything reaching the proxy | carries a device certificate | one request arrives without one |
+| Strict mTLS at the TLS layer | viable | breaks that request |
+
+Recommended: `settings.json`, with mTLS enforced only on the rotation path. That also
+dissolves the version dependency in F06. **Until this is decided, [#6](../../issues/6)
+cannot be specified.**
+
+### 8.2 Make the verification loop trustworthy — [#9](../../issues/9)
+
+Two problems, both found while running the suite for the P0 changes:
+
+- Tests inherit ambient `HTTP(S)_PROXY` and fail for unrelated reasons. Anyone who runs
+  the suite while using this proxy sees red tests caused by their own environment.
+- The suite can hang without a per-test timeout.
+
+There is also **no CI running on this fork**, so P0 was verified by hand. P1 is a large
+refactor of shared state; doing it without a trustworthy signal is how silent regressions
+land. Fix the isolation bug and enable Actions before starting it.
+
+### 8.3 Reconcile the compliance documentation
+
+[`docs/compliance.md`](compliance.md) currently asserts three things that a hosted
+deployment inverts. Leaving it in place while building the opposite makes the repository
+self-contradictory, and it is the document a reader consults first. Rewriting is P4 work,
+but a note marking it as superseded belongs there now.
+
+### 8.4 Close the client-platform gap
+
+The thin-client claim (§1) rests on F01, F04 and F08, measured on **Windows and Linux
+only**. macOS is unmeasured, and the harness is directly reusable, so this is an
+afternoon rather than a project. Also unmeasured: interactive mode, background agents,
+and nesting behind an existing corporate proxy. Each could add a client requirement.
+
+---
+
+## 9. Appendix
 
 ### Reproducing the measurements
 
