@@ -9,9 +9,11 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Measured | 18 |
-| Open | 2 — client platform coverage, see §8.4 |
-| Backlog | 1 — egress IP, see §5 |
+| Requirements | 12 functional, 11 non-functional — §4.1, §4.2 |
+| Assumptions | 10 — 6 verified, 3 unverified, 1 known false — §4.3 |
+| Constraints | 6 — §4.4 |
+| Measured findings | 18 — §2 |
+| Backlog | 1 — egress IP, §5 |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
 | Pull requests | [#1](../../pull/1), [#2](../../pull/2), [#10](../../pull/10) |
 
@@ -115,7 +117,78 @@ flowchart LR
 
 ## 4. Requirements
 
-### A — already present, reusable as-is
+Four registers. Every entry traces to a finding (`F**`), an existing implementation, or an
+issue — nothing here is stated without a source. The gap analysis that follows in §4.5
+says which of these already exist in the codebase.
+
+### 4.1 Functional — FR
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| **FR-01** | Isolate each tenant's accounts, quota state and rotation from every other tenant | [#4](../../issues/4) |
+| **FR-02** | Enrol a device: issue a per-device certificate, and revoke it without touching the tenant's other devices | F01, [#6](../../issues/6) |
+| **FR-03** | Enrolment writes the proxy URL to **both** `~/.claude/settings.json` (user scope) **and** a shell `export` | F14–F17 |
+| **FR-04** | Terminate MITM with a per-tenant CA and a leaf scoped to the upstream host | F08, [#5](../../issues/5) |
+| **FR-05** | Rotate accounts on inference paths only (`/v1/messages`, `count_tokens`, `/v1/complete`) | F10, [#2](../../pull/2) |
+| **FR-06** | Relay every other path on the client's own credential | F10, [#2](../../pull/2) |
+| **FR-07** | Allow CONNECT only to an allowlist: upstream is MITM-ed, other Anthropic hosts are blind-tunnelled, the rest refused | F09, [#8](../../issues/8) |
+| **FR-08** | Enrol an account by OAuth without a hosted callback — PKCE plus manual code entry | `oauth.js` `raceWithStdinCode` |
+| **FR-09** | Detect an invalidated token, notify the user, and offer re-authentication from the dashboard | [#7](../../issues/7) |
+| **FR-10** | Refuse clients below a published minimum version, naming the version and how to update | §8.4 |
+| **FR-11** | Dashboard: accounts, devices, quota, per-tenant status | — |
+| **FR-12** | Meter usage per tenant for billing | `updateUsage`, SSE parsing |
+
+### 4.2 Non-functional — NFR
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| **NFR-01** | No credential crosses the network in cleartext — the listener speaks TLS | [#1](../../pull/1) |
+| **NFR-02** | Enforce mTLS on the rotation path, not at the TLS layer | §8.1, F06 |
+| **NFR-03** | Per-tenant CA private key held in a KMS; signing happens inside it | [#5](../../issues/5) |
+| **NFR-04** | Refresh tokens stored envelope-encrypted, never plaintext at rest | [#7](../../issues/7) |
+| **NFR-05** | Request-body logging off by default; when on, tenant-encrypted with short retention | §7 |
+| **NFR-06** | Edge adds no measurable latency — TLS termination or TCP passthrough both ≈0 | F07, F08 |
+| **NFR-07** | Survive long-lived SSE responses: no idle timeout below the client's own watchdogs | F07 (`proxy_timeout`) |
+| **NFR-08** | Per-tenant egress IP, not a shared NAT | §5 backlog |
+| **NFR-09** | Horizontal scaling without double-counting quota — tenant-sticky routing or externalised state | [#4](../../issues/4) |
+| **NFR-10** | Canary each new client release before adopting it as the floor | §8.4, F03, F06 |
+| **NFR-11** | Audit every access to stored credentials | §7 |
+
+### 4.3 Assumptions — ASM
+
+Status is measured, not asserted. An unverified assumption is marked as such.
+
+| ID | Assumption | Status |
+| --- | --- | --- |
+| **ASM-01** | The client presents its device certificate inside the CONNECT tunnel | ✅ F01 — Windows, Linux, public path, edge-terminated |
+| **ASM-02** | An `https://` proxy URL is honoured | ✅ F02 — 2.1.223 and 2.1.193 |
+| **ASM-03** | Shell env plus user-scope `settings.json` captures all traffic | ✅ F14 — 9 of 9 paths |
+| **ASM-04** | Background agents are reachable by configuration | ✅ F15, F17 — user scope and shell env both reach them; **project scope does not** (F16) |
+| **ASM-05** | One account may serve concurrent sessions | ✅ F18 — production use |
+| **ASM-06** | Device auth survives an edge that terminates outer TLS | ✅ F08 |
+| **ASM-07** | macOS behaves as Windows and Linux do | ❌ **unverified** — §8.5 |
+| **ASM-08** | Interactive mode produces the same request pattern as `-p` | ❌ **unverified** — §8.5 |
+| **ASM-09** | A datacenter egress IP is treated like any other | ❌ **unverified** — §5, backlog by decision |
+| **ASM-10** | Client behaviour is stable across releases | ❌ **false** — F03 and F06 both found it moving. NFR-10 exists because of this |
+
+### 4.4 Constraints — CON
+
+Fixed properties of the design or its environment. Not problems to solve — bounds to work inside and to state plainly to users.
+
+| ID | Constraint | Consequence |
+| --- | --- | --- |
+| **CON-01** | `HTTPS_PROXY` holds one value and the client has no proxy chaining | A client behind an **explicit** corporate proxy cannot use the service. Transparent proxies are unaffected — §8.6 |
+| **CON-02** | Terminating TLS in the cloud puts every prompt and file in server memory as plaintext; the body is buffered whole so it can be replayed on another account | Unavoidable. Drives NFR-04, NFR-05, NFR-11 and the legal review in §7 |
+| **CON-03** | One request fires before `settings.json` is read | Only the shell `export` covers it — hence FR-03 requiring both |
+| **CON-04** | Cloud sessions ignore `NODE_EXTRA_CA_CERTS` and the client-certificate variables | Claude Code on the web cannot be routed through the service; support the local CLI only |
+| **CON-05** | Issuing leaves server-side requires persisting a CA private key | A regression against the local design, which discards it. Bounded by NFR-03 |
+| **CON-06** | Users upload their own refresh tokens to a third party | A grey area under the consumer terms. Mitigate with a self-hostable build, explicit consent and NFR-11; needs legal review |
+
+### 4.5 Gap analysis
+
+Which of the above already exist in the codebase.
+
+#### A — already present, reusable as-is
 
 | Requirement | Existing implementation |
 | --- | --- |
@@ -130,7 +203,7 @@ flowchart LR
 | Token refresh, 401 re-auth, 403 failover | `ensureTokenFresh`, `forwardRequest` |
 | MITM CA and leaf issuance | `src/mitm.js`, `src/x509.js` |
 
-### B — present but needs changing for hosted use
+#### B — present but needs changing for hosted use
 
 | Item | Today | Needed | Tracked |
 | --- | --- | --- | --- |
@@ -143,7 +216,7 @@ flowchart LR
 | Loopback auth exemption | always exempt | must be disableable | [#8](../../issues/8) |
 | TUI | inside the server process | separate web dashboard | — |
 
-### C — does not exist yet
+#### C — does not exist yet
 
 | Item | Note | Tracked |
 | --- | --- | --- |
