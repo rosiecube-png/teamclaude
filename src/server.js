@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { timingSafeEqual } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
@@ -51,6 +51,45 @@ export function safeKeyEqual(a, b) {
 // localhost on both the HTTP and CONNECT paths.
 export function isLoopbackAddr(addr) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+/**
+ * TLS options for the proxy's OWN listener, or null when `proxy.tls` is unset.
+ *
+ * Without this the listener is plain HTTP. That is fine on loopback, but the
+ * documented off-box mode (`proxy.host: '0.0.0.0'` + `proxy.apiKey`) then sends
+ * the proxy key in clear on every request — `x-api-key` on the base-URL path and
+ * `Proxy-Authorization` on every CONNECT. Anyone on the path can lift it, and
+ * that key is permission to have real account tokens injected. The payload is
+ * not the exposure (the MITM tunnel encrypts it); the credential is.
+ *
+ * Claude Code speaks an `https://` proxy URL, so terminating TLS here is enough
+ * to close that gap — no client-side bridge needed.
+ *
+ * Paths, not inline PEM: certificates come from ACME renewals that rewrite files
+ * in place, and a config holding a copy would go stale on the first renewal.
+ * A missing or unreadable file is fatal on purpose — falling back to plaintext
+ * would silently serve the very thing this setting exists to prevent.
+ */
+export function resolveProxyTls(config, read = readFileSync) {
+  const tls = config?.proxy?.tls;
+  if (!tls) return null;
+  const { cert, key, ca } = tls;
+  if (!cert || !key) {
+    throw new Error('proxy.tls needs both "cert" and "key" (paths to PEM files)');
+  }
+  const load = (path, label) => {
+    try {
+      return read(path);
+    } catch (err) {
+      throw new Error(`proxy.tls.${label}: cannot read ${path} — ${err.message}`);
+    }
+  };
+  return {
+    cert: load(cert, 'cert'),
+    key: load(key, 'key'),
+    ...(ca ? { ca: load(ca, 'ca') } : {}),
+  };
 }
 
 export function createProxyServer(accountManager, config, hooks = {}, sx = null) {
@@ -122,7 +161,13 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   // the base listener and the MITM one so both honour the same hold.
   const egress = createEgressGuard(config, console.error);
   const forward = createProxyRequestListener({ accountManager, upstream, logDir, hooks, sx, holdMs, config, egress });
-  const server = http.createServer(requestHandler);
+  // An https.Server still emits 'connect' and 'upgrade' — it is an http.Server
+  // whose transport happens to be TLS — so the CONNECT/MITM and WebSocket paths
+  // below attach identically either way.
+  const proxyTls = resolveProxyTls(config);
+  const server = proxyTls
+    ? https.createServer(proxyTls, requestHandler)
+    : http.createServer(requestHandler);
 
   // Forward-proxy support (always on, so multiple claude instances can use
   // either ANTHROPIC_BASE_URL or HTTPS_PROXY against the same server). A CONNECT
