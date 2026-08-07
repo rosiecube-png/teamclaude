@@ -377,6 +377,12 @@ control plane.
 | Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16 | [#19](../../issues/19) |
 | CONNECT destination allowlist; drop the test-host intercept; make the loopback exemption disableable | FR-07 | [#8](../../issues/8) |
 | Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) |
+| Renew MITM certificates on age, not only on host mismatch | NFR-17 | [#21](../../issues/21) |
+
+[#21](../../issues/21) is a defect in the current proxy, found while verifying NFR-17:
+`leafCovers()` checks the signature and the SANs but never the validity dates, so an
+expired leaf is reused rather than replaced. Locally that costs one `rm`; once devices
+have been handed a CA it breaks all of them at once, which is what puts it in M1.
 
 Authentication is already sufficient here: `proxy.apiKey` over the TLS listener
 ([#1](../../pull/1)) authenticates a remote client and keeps the key off the wire. Device
@@ -419,9 +425,10 @@ Not features — the things that make it defensible to run for anyone but yourse
 
 | | Requirement | Tracked |
 | --- | --- | --- |
-| Stated availability posture; backup and a rehearsed restore | NFR-12, NFR-14 | — |
-| Incident process: detect, contain, notify | NFR-15 | — |
-| Fair-share between tenants; secret rotation; declared data residency | NFR-16, NFR-17, NFR-18 | — |
+| Stated availability posture; backup and a rehearsed restore | NFR-12, NFR-14 | [#22](../../issues/22) |
+| Fair-share between tenants | NFR-16 | [#23](../../issues/23) |
+| Secret rotation and revocation | NFR-17 | [#24](../../issues/24) |
+| Incident process; declared data residency | NFR-15, NFR-18 | [#25](../../issues/25) |
 | Per-tenant egress | NFR-08 | — |
 | Rewrite the compliance documentation | CON-06 | — |
 
