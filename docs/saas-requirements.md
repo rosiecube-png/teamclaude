@@ -232,9 +232,27 @@ prompt plaintext, which exists in memory on infrastructure the operator does not
 
 ## 4. Requirements
 
-Four registers. Every entry traces to a finding (`F**`), an existing implementation, or an
-issue — nothing here is stated without a source. The gap analysis that follows in §4.5
-says which of these already exist in the codebase.
+Four registers, plus the risk register in §10. Every entry traces to a finding, an existing
+implementation, or an issue — nothing here is stated without a source. The gap analysis in
+§4.5 says which already exist in the codebase.
+
+**Identifiers.** One scheme, declared here so nothing invents another. A sub-requirement
+extends its parent (`FR-07.3`) rather than opening a new space — the specs under
+[`specs/`](specs/) decompose these IDs, they do not replace them.
+
+| Prefix | Meaning | Lives in |
+| --- | --- | --- |
+| `FR-nn` | Functional requirement | §4.1 |
+| `NFR-nn` | Non-functional requirement | §4.2 |
+| `ASM-nn` | Assumption, with verification status | §4.3 |
+| `CON-nn` | Constraint | §4.4 |
+| `RSK-nn` | Risk, with likelihood, impact, owner and residual | §10 |
+| `G-n` | Success criterion | §0 |
+| `Fnn` | Measured finding — no hyphen, e.g. `F14` | §2 |
+
+`R-` is deliberately unused: it was briefly taken by spec sub-requirement IDs (`R-8.1` …),
+withdrawn in [#26](../../pull/26) for breaking traceability, and reusing it for risks would
+have put `R-8` in the repository twice meaning two different things.
 
 ### 4.1 Functional — FR
 
@@ -526,7 +544,7 @@ the document (C-1). Stated as a decision:
 | --- | --- |
 | **Question** | Is the community-hosted mode offered at all? |
 | **Owner** | Repository owner |
-| **Inputs** | R-1 measured with M1 running · R-8 actual cost against actual donations · legal review of R-5 · the incident posture in [#25](../../issues/25) |
+| **Inputs** | RSK-01 measured with M1 running · RSK-08 actual cost against actual donations · legal review of RSK-05 · the incident posture in [#25](../../issues/25) |
 | **Outcomes** | Offer it · offer it with a scope honestly reduced to what one person can carry · do not offer it, and ship self-hostable only |
 | **Not deciding** | is itself an outcome — it leaves M1 shipped and M2–M4 unbuilt, which is a legitimate place to stop |
 
@@ -675,26 +693,26 @@ by a statement of what the treatment leaves behind (B-1, B-2, B-3).
 
 | | Risk | L | I | Treatment | Residual | Owner | Review when |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **R-1** | Limits key on the egress IP, so pooling accounts behind one address yields no multiple — the product premise | M | **H** | `egress.pin` holds; `sx.mode` retries from another IP | **Metered per-GB spend against donations** (CON-08) | Operator | M1 running, first real traffic |
-| **R-2** | The allowlist refuses a host a real session needs | M | M | FR-07.5 composes it by running a client and recording refusals | **Interactive mode is unmeasured** (ASM-08, ASM-14), so the list is incomplete by construction | Operator | Any client release; first interactive use |
-| **R-3** | A client release moves the behaviour this design rests on | **H** | **H** | NFR-10 canary before adopting a release as the floor; NFR-22 isolates the tracking code | Detection is reactive — the canary runs after the release exists | Operator | Every client release |
-| **R-4** | The upstream response contract changes and quota tracking degrades **silently** | M | **H** | None today — ASM-11 is unverified and nothing watches for it | **Untreated.** The failure is silent, which is what makes it worse than R-3 | Operator | — none defined |
-| **R-5** | Credential custody is read as prohibited under the consumer terms | L | **H** | Self-hostable build; explicit consent; NFR-11 audit | Interpretation is not the operator's to make; legal review is advisory | Owner | Before community-hosted launch |
-| **R-6** | Plaintext prompts in server memory are disclosed | L | **H** | NFR-05 logging off, NFR-15 incident process, short retention | **Unavoidable while TLS terminates in the cloud** (CON-02) | Operator | On any incident; M4 gate |
-| **R-7** | An operator deliberately opens a hardening switch and is compromised | L | M | Defaults derive from `proxy.host`, so the unsafe state needs intent | **No guard rail against the deliberate case** | Operator | — |
-| **R-8** | Donations do not cover KMS, dedicated egress and on-call | **H** | M | Scope M4 to what a volunteer can carry, or do not offer hosting | This is the M4 gate, not a risk to mitigate away | Owner | M4 gate |
+| **RSK-01** | Limits key on the egress IP, so pooling accounts behind one address yields no multiple — the product premise | M | **H** | `egress.pin` holds; `sx.mode` retries from another IP | **Metered per-GB spend against donations** (CON-08) | Operator | M1 running, first real traffic |
+| **RSK-02** | The allowlist refuses a host a real session needs | M | M | FR-07.5 composes it by running a client and recording refusals | **Interactive mode is unmeasured** (ASM-08, ASM-14), so the list is incomplete by construction | Operator | Any client release; first interactive use |
+| **RSK-03** | A client release moves the behaviour this design rests on | **H** | **H** | NFR-10 canary before adopting a release as the floor; NFR-22 isolates the tracking code | Detection is reactive — the canary runs after the release exists | Operator | Every client release |
+| **RSK-04** | The upstream response contract changes and quota tracking degrades **silently** | M | **H** | None today — ASM-11 is unverified and nothing watches for it | **Untreated.** The failure is silent, which is what makes it worse than RSK-03 | Operator | — none defined |
+| **RSK-05** | Credential custody is read as prohibited under the consumer terms | L | **H** | Self-hostable build; explicit consent; NFR-11 audit | Interpretation is not the operator's to make; legal review is advisory | Owner | Before community-hosted launch |
+| **RSK-06** | Plaintext prompts in server memory are disclosed | L | **H** | NFR-05 logging off, NFR-15 incident process, short retention | **Unavoidable while TLS terminates in the cloud** (CON-02) | Operator | On any incident; M4 gate |
+| **RSK-07** | An operator deliberately opens a hardening switch and is compromised | L | M | Defaults derive from `proxy.host`, so the unsafe state needs intent | **No guard rail against the deliberate case** | Operator | — |
+| **RSK-08** | Donations do not cover KMS, dedicated egress and on-call | **H** | M | Scope M4 to what a volunteer can carry, or do not offer hosting | This is the M4 gate, not a risk to mitigate away | Owner | M4 gate |
 
-**R-4 is the one to act on.** It is the only high-impact risk with no treatment at all, and
-its failure mode is silence — rotation degrades and nothing reports it. R-3 at least
+**RSK-04 is the one to act on.** It is the only high-impact risk with no treatment at all, and
+its failure mode is silence — rotation degrades and nothing reports it. RSK-03 at least
 announces itself when a canary fails.
 
-**R-1 and R-8 are the same question** seen from two sides: whether the economics work. Both
+**RSK-01 and RSK-08 are the same question** seen from two sides: whether the economics work. Both
 resolve at the M4 gate, and both are answerable only with M1 running.
 
 ### Review
 
-Risks are reviewed at each milestone gate, and on any client or upstream release. R-4 has
-no trigger because nothing detects it — closing that is what a treatment for R-4 would
+Risks are reviewed at each milestone gate, and on any client or upstream release. RSK-04 has
+no trigger because nothing detects it — closing that is what a treatment for RSK-04 would
 mean.
 
 ---

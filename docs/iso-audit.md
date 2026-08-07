@@ -252,7 +252,7 @@ follow-up. The register grew from 18 FR / 21 NFR / 14 ASM / 10 CON to add **NFR-
 an **asset and data inventory** (§9), and a **risk register** (§10) carrying likelihood,
 impact, owner, residual and review trigger for eight risks.
 
-Closing them is not the same as discharging them. **R-4 remains untreated** — the upstream
+Closing them is not the same as discharging them. **RSK-04 remains untreated** — the upstream
 response contract can change and degrade rotation silently, and nothing watches for it. It
 is now visible and owned, which is the difference between a gap and a known risk.
 
