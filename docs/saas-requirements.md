@@ -374,15 +374,19 @@ control plane.
 
 | | Requirement | Tracked |
 | --- | --- | --- |
-| Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16 | — |
-| Device certificates, issued and revocable | FR-02 | [#6](../../issues/6) |
-| mTLS enforced on the rotation path | NFR-02 | [#6](../../issues/6) |
+| Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16 | [#19](../../issues/19) |
 | CONNECT destination allowlist; drop the test-host intercept; make the loopback exemption disableable | FR-07 | [#8](../../issues/8) |
-| Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | — |
+| Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) |
 
-**Exit:** G-1 (a machine enrolled, no resident process), G-4 (revoke one device), G-6
-(legible failure). G-5 becomes observable here — this is where ASM-09 stops being an
-estimate.
+Authentication is already sufficient here: `proxy.apiKey` over the TLS listener
+([#1](../../pull/1)) authenticates a remote client and keeps the key off the wire. Device
+certificates are **not** an M1 requirement — with one operator and their own machines, a
+lost device is handled by rotating the proxy key. Per-device identity only becomes
+necessary once devices belong to different people, so mTLS enforcement moves to M2.
+Enrolment still places the certificate files, so M2 does not have to redo it.
+
+**Exit:** G-1 (a machine enrolled, no resident process) and G-6 (legible failure). G-5
+becomes observable here — this is where ASM-09 stops being an estimate.
 
 ### M2 — Multi-tenant core
 
@@ -391,12 +395,14 @@ The point at which it can hold someone else's credentials at all.
 | | Requirement | Tracked |
 | --- | --- | --- |
 | Per-tenant config store, `AccountManager`, distributed locking | FR-01, NFR-09 | [#4](../../issues/4) |
+| Device certificates, issued and revocable; mTLS enforced on the rotation path | FR-02, NFR-02 | [#6](../../issues/6) |
 | Per-tenant CA with the key in a KMS | FR-04, NFR-03 | [#5](../../issues/5) |
 | Envelope-encrypted tokens; audit every credential access | NFR-04, NFR-11 | [#5](../../issues/5) |
 | Minimum client version, and a canary on each release | FR-10, NFR-10 | [#16](../../issues/16) |
 | Watch the upstream response contract | ASM-11 | — |
 
-**Exit:** G-3 (no request ever served with another person's account).
+**Exit:** G-3 (no request ever served with another person's account) and G-4 (revoke one
+device without disturbing that person's others).
 
 ### M3 — Control plane
 
@@ -416,8 +422,11 @@ Not features — the things that make it defensible to run for anyone but yourse
 | Stated availability posture; backup and a rehearsed restore | NFR-12, NFR-14 | — |
 | Incident process: detect, contain, notify | NFR-15 | — |
 | Fair-share between tenants; secret rotation; declared data residency | NFR-16, NFR-17, NFR-18 | — |
-| Per-tenant egress | NFR-08 | [#3](../../issues/3) |
+| Per-tenant egress | NFR-08 | — |
 | Rewrite the compliance documentation | CON-06 | — |
+
+[#3](../../issues/3) stays **out of every milestone**: it is backlog by decision (§5), and
+giving it one would present it as scheduled work.
 
 **Gate.** M4 is where CON-08 has to be answered: NFR-03, NFR-08 and NFR-15 all carry
 ongoing cost against donations. Either this milestone is scoped to what a volunteer can
