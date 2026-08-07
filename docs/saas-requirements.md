@@ -39,9 +39,13 @@ Stated so requirements are not written for them.
 
 ### Two deployment modes
 
-These have very different obligations, and several requirements apply to only one. Which
-one is being built is **not yet decided**, and the answer changes what must be done before
-anything can be run for other people.
+These have very different obligations, and several requirements apply to only one.
+
+**Decided: community-hosted is the target.** Self-hosted is not a fallback — it is the
+first milestone on the way there (M1, §6). Everything M1 delivers is needed by the
+community-hosted build too; nothing is thrown away. The value of sequencing it that way is
+that the project reaches something usable, by its own author, before it takes on anyone
+else's credentials.
 
 | | **Self-hosted** | **Community-hosted** |
 | --- | --- | --- |
@@ -53,13 +57,14 @@ anything can be run for other people.
 | Credential-custody grey area (CON-06) | **Does not arise** | Applies |
 | Funding for dedicated egress, KMS, on-call | Operator's own machine | **Donations only** |
 
-Self-hosted is the lower-risk path and is close to what exists today: the local proxy
-already supports off-box operation (F13). Community-hosted adds the entire control plane,
-the security boundary, and legal exposure — funded by donations.
+The local proxy already supports off-box operation (F13), so M1 is a short distance from
+what exists. Community-hosted then adds the control plane, the security boundary, and the
+legal exposure — funded by donations.
 
 That funding gap is a real constraint, not a footnote (CON-08). Several requirements here
 — per-tenant egress IPs (NFR-08), KMS-held CA keys (NFR-03), incident response (NFR-15) —
-carry ongoing cost with no revenue against them.
+carry ongoing cost with no revenue against them. Reaching M1 first means that question can
+be answered with a running system rather than an estimate.
 
 ### Success criteria
 
@@ -335,40 +340,106 @@ rather than the account, which is what makes it a question at all.
    a proxy on a cloud host and keep using the existing setup — only exercises *one
    person's* accounts behind one address. The concern is *several people's* accounts
    sharing one, which cannot be observed before real multi-tenant traffic exists. So it
-   cannot be a prerequisite for the work that produces that traffic.
+   cannot be a prerequisite for the work that produces that traffic. M1 is where it first
+becomes observable.
 
 Revisit as a deployment checklist item: set `upstreamProxy`, use it normally, and watch
 whether rotation still clears a limit.
 
 ---
 
-## 6. Order of work
+## 6. Milestones
 
-The order matters: each step is either a prerequisite for the next, or its result changes
-the next one's design.
+Community-hosted is the target (§0). The sequence below reaches a **self-hostable** system
+first, because everything that milestone needs is needed by the hosted build anyway, and
+because it puts a running system in front of the questions that are currently estimates —
+egress behaviour (ASM-09) and whether donations can carry the cost (CON-08).
 
-| Phase | Work | Gate |
+Each milestone is a state the project can stop at without leaving something half-built.
+
+### M0 — Correctness on the current proxy · **done**
+
+Fixes that stand on their own, independent of any hosting plan.
+
+| | Requirement | Landed |
 | --- | --- | --- |
-| **P0** | TLS listener and rotation scope. Both fix defects in the current product independently of any hosting plan. | [#1](../../pull/1), [#2](../../pull/2) — merged |
-| **P1** | Dismantle single-tenancy: config store to a database, per-tenant `AccountManager`, distributed locking. Most later work is blocked on this. | [#4](../../issues/4) |
-| **P2** | Security boundary: per-tenant CA and key custody, mTLS device auth, hosted hardening. | [#5](../../issues/5), [#6](../../issues/6), [#8](../../issues/8) — security review |
-| **P3** | Control plane: signup, OAuth enrolment, re-auth flow, dashboard, offboarding, per-tenant visibility. | [#7](../../issues/7) |
-| **P4** | Rewrite the compliance documentation. | release gate — legal review advised |
+| TLS on the listener, so the proxy key never crosses in clear | NFR-01 | [#1](../../pull/1) |
+| Rotate only on inference paths | FR-05, FR-06 | [#2](../../pull/2) |
+| Verification loop: test isolation, per-test timeout, CI | §8.2 | [#12](../../pull/12) |
 
-**P1–P4 are the community-hosted path.** Self-hosted needs far less: the local proxy
-already binds off-box with an authenticated listener (F13, [#1](../../pull/1)), so it
-needs the client-enrolment work (FR-02, FR-03, FR-16) and the hardening in
-[#8](../../issues/8) — not multi-tenancy, not a KMS, not a control plane, and none of the
-legal work in P4. Deciding the mode (§0) therefore decides most of the remaining scope,
-and it is the largest open question left in this document.
+### M1 — Self-hostable
 
-[§8](#8-to-settle-before-building) tracks what was settled before P1 and the two client
-coverage gaps that remain open. Neither blocks P1.
+Run it on your own host; reach it from your own machines. One operator, own accounts, no
+control plane.
 
-On P4: [`docs/compliance.md`](compliance.md) currently states the project is *"a
-self-hosted local proxy… **not** a hosted service"* that *"never routes requests on behalf
-of third parties"*. All three claims invert, so the page needs rewriting rather than
-amending.
+| | Requirement | Tracked |
+| --- | --- | --- |
+| Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16 | [#19](../../issues/19) |
+| CONNECT destination allowlist; drop the test-host intercept; make the loopback exemption disableable | FR-07 | [#8](../../issues/8) |
+| Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) |
+| Renew MITM certificates on age, not only on host mismatch | NFR-17 | [#21](../../issues/21) |
+
+[#21](../../issues/21) is a defect in the current proxy, found while verifying NFR-17:
+`leafCovers()` checks the signature and the SANs but never the validity dates, so an
+expired leaf is reused rather than replaced. Locally that costs one `rm`; once devices
+have been handed a CA it breaks all of them at once, which is what puts it in M1.
+
+Authentication is already sufficient here: `proxy.apiKey` over the TLS listener
+([#1](../../pull/1)) authenticates a remote client and keeps the key off the wire. Device
+certificates are **not** an M1 requirement — with one operator and their own machines, a
+lost device is handled by rotating the proxy key. Per-device identity only becomes
+necessary once devices belong to different people, so mTLS enforcement moves to M2.
+Enrolment still places the certificate files, so M2 does not have to redo it.
+
+**Exit:** G-1 (a machine enrolled, no resident process) and G-6 (legible failure). G-5
+becomes observable here — this is where ASM-09 stops being an estimate.
+
+### M2 — Multi-tenant core
+
+The point at which it can hold someone else's credentials at all.
+
+| | Requirement | Tracked |
+| --- | --- | --- |
+| Per-tenant config store, `AccountManager`, distributed locking | FR-01, NFR-09 | [#4](../../issues/4) |
+| Device certificates, issued and revocable; mTLS enforced on the rotation path | FR-02, NFR-02 | [#6](../../issues/6) |
+| Per-tenant CA with the key in a KMS | FR-04, NFR-03 | [#5](../../issues/5) |
+| Envelope-encrypted tokens; audit every credential access | NFR-04, NFR-11 | [#5](../../issues/5) |
+| Minimum client version, and a canary on each release | FR-10, NFR-10 | [#16](../../issues/16) |
+| Watch the upstream response contract | ASM-11 | — |
+
+**Exit:** G-3 (no request ever served with another person's account) and G-4 (revoke one
+device without disturbing that person's others).
+
+### M3 — Control plane
+
+| | Requirement | Tracked |
+| --- | --- | --- |
+| Signup and dashboard authentication | FR-11, FR-13, NFR-19 | [#7](../../issues/7) |
+| OAuth enrolment by pasted code; re-auth when a token is invalidated | FR-08, FR-09 | [#7](../../issues/7) |
+| Offboarding: revoke devices, delete tokens, confirm | FR-14, FR-15 | [#7](../../issues/7) |
+| Per-person usage and quota visibility | FR-12 | — |
+
+### M4 — Operable for other people
+
+Not features — the things that make it defensible to run for anyone but yourself.
+
+| | Requirement | Tracked |
+| --- | --- | --- |
+| Stated availability posture; backup and a rehearsed restore | NFR-12, NFR-14 | [#22](../../issues/22) |
+| Fair-share between tenants | NFR-16 | [#23](../../issues/23) |
+| Secret rotation and revocation | NFR-17 | [#24](../../issues/24) |
+| Incident process; declared data residency | NFR-15, NFR-18 | [#25](../../issues/25) |
+| Per-tenant egress | NFR-08 | — |
+| Rewrite the compliance documentation | CON-06 | — |
+
+[#3](../../issues/3) stays **out of every milestone**: it is backlog by decision (§5), and
+giving it one would present it as scheduled work.
+
+**Gate.** M4 is where CON-08 has to be answered: NFR-03, NFR-08 and NFR-15 all carry
+ongoing cost against donations. Either this milestone is scoped to what a volunteer can
+carry, or the community-hosted mode is not offered. Legal review belongs here too — see
+[`docs/compliance.md`](compliance.md), which asserts three things a hosted deployment
+inverts.
 
 ---
 
@@ -417,7 +488,7 @@ runs automatically on push and pull request.
 ### 8.3 Compliance documentation — done
 
 Scoped to the local proxy in [#13](../../pull/13), pointing here. The full rewrite stays
-release-gate work (P4) and wants legal review.
+a milestone-4 gate and wants legal review.
 
 ### 8.4 Enforce a minimum client version — open
 
