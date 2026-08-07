@@ -13,9 +13,13 @@ detects a half-configured machine, but no requirement said anything should.
 
 Every statement about current behaviour was read out of the source and cites where.
 
+> **Built.** FR-03.1 to FR-03.5, FR-16.1 and FR-16.3 shipped in task-2 (`src/enrol.js`).
+> Section 1 describes what existed before it. **FR-18.1 did not** — it is task-5, and the
+> mechanism gap in section 6 is still open.
+
 ---
 
-## 1. What exists today
+## 1. What existed before task-2
 
 `buildClaudeEnvLines()` — `src/claude-env.js:33` — emits shell `export` lines:
 

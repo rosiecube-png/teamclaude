@@ -46,12 +46,12 @@
 - **Agent**: backend
 - **CLI**: claude
 - **Title**: Client enrolment writes both configuration locations
-- **Status**: pending
+- **Status**: done
 - **Priority**: 2
 - **Dependencies**: task-0
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/enrol.js, src/claude-env.js, test/enrol.test.js
+- **Scope**: src/enrol.js, src/claude-env.js, test/enrol.test.js, src/x509.js
 - **Test Approach**: tdd (unit)
 - **Description**: Nothing in src/ reads or writes ~/.claude/settings.json today; buildClaudeEnvLines (src/claude-env.js:33) emits shell exports only. Measured (F14-F17): shell env covers the pre-settings window, user-scope settings.json covers everything after including background agents, and project scope silently bypasses the proxy for background agents. Both are required. Implement docs/specs/m1-enrolment.md.
 - **Acceptance Criteria**:

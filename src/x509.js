@@ -166,6 +166,36 @@ export function createLeaf(hosts, ca, days = DEFAULT_LEAF_DAYS) {
   return { certPem, keyPem: key.keyPem };
 }
 
+/**
+ * Generate a device key and a PKCS#10 request for it (FR-16.3).
+ *
+ * The key is made here and stays here — a certificate request is the only thing
+ * that can be handed to whatever signs it. A key minted on the server and sent
+ * down was, for a moment, the server's, and that is a different asset with a
+ * different entry in the inventory.
+ *
+ *   CertificationRequestInfo ::= SEQUENCE { version, subject, subjectPKInfo, [0] attributes }
+ *   CertificationRequest     ::= SEQUENCE { info, signatureAlgorithm, signature }
+ *
+ * The attributes set is present and empty: it is not OPTIONAL in the grammar,
+ * and a request without it is rejected by anything that parses strictly.
+ */
+export function createCsr(commonName) {
+  const key = newRsaKey();
+  const info = seq([
+    integer(Buffer.from([0])),   // version v1
+    nameCN(commonName),
+    key.spkiDer,
+    explicit(0, Buffer.alloc(0)),
+  ]);
+  const signature = cryptoSign('sha256', info, key.privateKey);
+  return {
+    keyPem: key.keyPem,
+    publicKey: key.spkiDer,
+    csrPem: pem(seq([info, SIG_ALG, bitString(signature)]), 'CERTIFICATE REQUEST'),
+  };
+}
+
 /** Generate a fresh CA + a leaf covering `hosts` (string or array). Returns PEM strings. */
 export function generateCertChain(hosts, { leafDays = DEFAULT_LEAF_DAYS, caDays = DEFAULT_CA_DAYS } = {}) {
   const ca = createCA(undefined, caDays);

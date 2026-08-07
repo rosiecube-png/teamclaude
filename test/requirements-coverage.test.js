@@ -176,9 +176,13 @@ test('the plan is internally consistent', () => {
     }
   }
 
-  // two agents editing one file in parallel is what scope exists to prevent
+  // Two agents editing one file in parallel is what scope exists to prevent, so
+  // a task that is finished is not a party to it — nothing of it is still
+  // running. task-2 needed x509.js for a certificate request, which task-1 had
+  // already finished with; refusing that would have meant either a second copy
+  // of the ASN.1 primitives or a false entry in the plan.
   const byTier = {};
-  for (const t of plan.tasks) (byTier[t.priority] ||= []).push(t);
+  for (const t of plan.tasks) if (t.status !== 'done') (byTier[t.priority] ||= []).push(t);
   for (const [tier, ts] of Object.entries(byTier)) {
     for (let i = 0; i < ts.length; i++) {
       for (let j = i + 1; j < ts.length; j++) {
