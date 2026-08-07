@@ -2,6 +2,21 @@ node_modules/
 config.json
 *.log
 package-lock.json
+
+# Agent tooling installs itself into the working tree. `git add .github/` was
+# meant to stage one workflow edit and took 316 of these files with it, which
+# broke lint on vendored browser code nobody here wrote. Listing every path the
+# installer uses closes that off rather than waiting to meet each one.
 .agents/
+.claude/
+.codex/
+.cursor/
+.grok/
+.qwen/
+.serena/
+.zcode/
 .github/skills/
 .github/prompts/
+.mcp.json
+AGENTS.md
+CLAUDE.md
