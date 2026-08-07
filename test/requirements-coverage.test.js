@@ -116,6 +116,8 @@ test('the plan and the register describe the same risks', () => {
     (JSON.stringify(plan.project_controls.iso_31000).match(/RSK-\d\d/g) || []))].sort();
   const inDoc = [...new Set((doc().match(/\| \*\*RSK-\d\d\*\*/g) || [])
     .map((x) => x.replace(/[|*\s]/g, '')))].sort();
+  assert.ok(inDoc.length > 0 && inPlan.length > 0,
+    'one side lists no risks at all — this guard would pass by comparing two empty sets');
   assert.deepEqual(inPlan, inDoc,
     'the risk register in §10 and the plan iso_31000 block have drifted apart');
 });
@@ -124,8 +126,12 @@ test('a measured finding that changed a contract is traced', () => {
   const trace = readFileSync('docs/plans/change-log.md', 'utf8');
   // every assumption the register marks measured-false changed something, so it
   // has to appear in the trace with what it touched
-  const falsified = (doc().match(/\| \*\*ASM-\d+\*\*[^|]*\| [^|]*measured false/g) || [])
-    .map((r) => r.match(/ASM-\d+/)[0]);
+  const falsified = doc().split('\n')
+    .filter((l) => /^\| \*\*ASM-\d+\*\*/.test(l) && /measured false/.test(l))
+    .map((l) => l.match(/ASM-\d+/)[0]);
+  assert.ok(falsified.length > 0,
+    'no assumption is marked measured false — either the register changed shape, ' +
+    'or this guard is matching nothing and asserting nothing');
   const untraced = falsified.filter((id) => !trace.includes(id));
   assert.deepEqual(untraced, [],
     `these findings changed something and are not in the change trace: ${untraced.join(', ')}`);
@@ -184,6 +190,8 @@ test('the plan is internally consistent', () => {
 test('the task board matches the plan it came from', () => {
   const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
   const board = readFileSync('docs/plans/task-board.md', 'utf8');
+  const total = plan.tasks.reduce((n, t) => n + t.acceptance_criteria.length, 0);
+  assert.ok(total > 0, 'the plan carries no acceptance criteria — nothing to compare');
   const missing = [];
   for (const t of plan.tasks) {
     for (const c of t.acceptance_criteria) if (!board.includes(c)) missing.push(t.id + ': ' + c.slice(0, 60));

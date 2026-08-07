@@ -183,3 +183,22 @@ cold. ISO 21500 wants both directions.
 
 **Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,
 which is how the first register was built and why the audit found eleven gaps in it.
+
+---
+
+## The guards are shown to fail
+
+A guard that has never failed might be asserting nothing, and one of them was: *a measured
+finding that changed a contract is traced* matched **zero rows** for its whole life. The
+verdict text is "measured false on the request path" and the pattern wanted "measured
+false" straight after a pipe, so it compared an empty list to an empty list and passed
+every run.
+
+`test/coverage-guards-catch.test.js` writes a real omission, asserts the coverage suite
+goes red, and reverts — twelve of them, one per guard. It also refuses to pass when its own
+anchor text has moved, because a mutation that changes nothing would otherwise look like a
+successful test.
+
+That does not make the set of guards complete. It makes each of them **demonstrated**
+rather than assumed, which is the same distinction this document applies to everything
+else.
