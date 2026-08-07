@@ -98,6 +98,28 @@ signal that enrolled devices are about to need a new CA.
 > **NFR-17.4** Certificate lifetimes MUST be configurable, and the shipped defaults MUST be
 > shorter than they are today.
 
+> **NFR-17.5** The renewal check MUST NOT be memoised for the process lifetime, and a
+> replaced chain MUST reach new connections without a restart.
+
+NFR-17.5 is the one that makes the rest work, and it was missing. Two memos stand between
+a regenerated chain and a client: `certsPromise` (`src/server.js:182`) is resolved once,
+and `serverPromises` (`src/mitm.js:131`) caches a terminating server that baked the
+certificate in at creation. Neither is invalidated by anything except a cert error.
+
+So a shorter lifetime without this is worse than leaving it alone. Measured (ASM-17):
+
+| | |
+| --- | --- |
+| An **established** connection | survives expiry — traffic flowed 2s past `notAfter` |
+| A **new** connection | refused with `CERT_HAS_EXPIRED` |
+
+Claude Code opens tunnels constantly, so the failure would not be a clean stop. Existing
+tunnels keep working while every new one fails, which reads as intermittent breakage.
+
+Also unresolved (ASM-22): `ensureCerts` is called from the CLI too (`src/index.js:648`,
+`:718`), so `teamclaude run` can regenerate a chain while a running server still serves the
+old one from its memo.
+
 825 days for a leaf is long enough that no operator will observe a renewal before it
 bites. A shorter lifetime exercises the renewal path routinely, which is what makes it
 trustworthy when it matters. The CA's 3650 days is a separate decision — it is bounded by
@@ -132,6 +154,8 @@ regenerated freely, it is not an operator-facing decision. It becomes one in
 | A chain whose leaf `notAfter` is in the past is replaced, not returned | NFR-17.1 |
 | A chain whose leaf expires within the renewal window is replaced | NFR-17.1 |
 | A leaf still inside the window, covering the hosts, is reused — no needless churn | NFR-17.1 |
+| A chain replaced while the process runs reaches the next connection, without a restart | NFR-17.5 |
+| A connection open across the replacement is not disturbed | NFR-17.5, ASM-17 |
 | A chain whose **CA** has expired is replaced even when the leaf is fresh | NFR-17.2 |
 | Regeneration logs the reason | NFR-17.3 |
 | `leafDays` and `renewBeforeDays` are honoured | NFR-17.4 |
@@ -143,5 +167,11 @@ with a past `notAfter` directly — no clock manipulation needed.
 
 ## 6. Open
 
-Nothing blocking. The CA lifetime decision belongs to [#5](../../../issues/5), where the
-key stops being disposable.
+**`leafDays` and `renewBeforeDays` are not an owner decision.** They were listed as one, in
+error: a leaf swap needs no client action (ASM-16, verified — clients hold the CA, not the
+leaf), so nothing competes with making the lifetime short enough to exercise renewal. The
+values follow from NFR-17.5 rather than from preference, and 90 / 30 is proposed on that
+basis.
+
+The CA lifetime *is* a decision, and belongs to [#5](../../../issues/5), where the key
+stops being disposable and devices start trusting a specific one.

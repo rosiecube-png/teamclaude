@@ -88,6 +88,23 @@ test('every risk carries a rating, an owner and a residual', () => {
   }
 });
 
+// Twenty-four assumptions were added in one sweep, and every one had been sitting
+// inside a document that read as fact. What made them findable was the status
+// column: an entry with no verdict is one nobody has checked.
+test('every assumption carries a verification status', () => {
+  const rows = doc().split('\n').filter((l) => /^\| \*\*ASM-\d+\*\*/.test(l));
+  assert.ok(rows.length > 0, 'no assumptions found in §4.3');
+  for (const row of rows) {
+    const cells = row.split('|').map((c) => c.trim());
+    const id = cells[1].replace(/\*/g, '');
+    const status = cells[3] || '';
+    assert.ok(/[✅❌⚠️]/.test(status),
+      `${id}: an assumption without a verdict is one nobody has checked — mark it measured, ` +
+      'source-read, deferred, unverified or false');
+    assert.ok(status.length > 12, `${id}: say what the verdict rests on, not just the symbol`);
+  }
+});
+
 test('the M1 plan is validated against the register it ships with', () => {
   const planPath = 'docs/plans/m1-plan.json';
   assert.ok(existsSync(planPath), 'the durable M1 plan is missing');

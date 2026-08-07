@@ -70,7 +70,11 @@ and it exists only as an implication.
 ### 3.1 Legible failure
 
 > **FR-17.1** Every failure the proxy originates MUST be distinguishable from every other by
-> its response body, and MUST NOT be reported as a generic proxy error.
+> its response body, and MUST NOT be reported as a generic proxy error. The **message** MUST
+> carry the whole story, because `error.type` does not reach the user.
+
+Measured (ASM-29): the client prints `message` verbatim and shows no sign of the type. The
+discriminator is for the operator and the logs.
 
 At minimum: upstream unreachable · all accounts exhausted · credential refused · destination
 refused · client version too old · proxy internal fault.
@@ -100,6 +104,12 @@ obviously the service rather than an opaque host.
 
 > **NFR-13.2** Removing the enrolment MUST restore direct operation completely, and MUST be
 > documented as the recovery step.
+
+A **partial** removal is the likely real shape, and it degrades safely: with the proxy gone
+and `NODE_EXTRA_CA_CERTS` left pointing at a deleted file, the client warned
+(`Ignoring extra certs … load failed`) and carried on (ASM-28). So the recovery step does
+not have to be performed perfectly to work, which is what matters when someone is doing it
+during an outage.
 
 This is FR-03.5 seen from the other side. It is the requirement that keeps an outage from
 becoming a lost day, and it matters more than any availability figure in

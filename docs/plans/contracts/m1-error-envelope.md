@@ -22,9 +22,10 @@ failure to be distinguishable, so each row below is a distinct value.
 
 | HTTP | `error.type` | Raised when | Requirement |
 | --- | --- | --- | --- |
-| 403 | `destination_not_allowed` | CONNECT or forward target is not on the allowlist | FR-07.4 |
-| 403 | `destination_address_blocked` | Target resolved to a loopback, link-local or private address | NFR-21.1 |
-| 403 | `destination_port_not_allowed` | Target port is not 443 | NFR-21.3 |
+| **CONNECT** 403 | *(status line only)* | A CONNECT target is refused — the tunnel never opens, so there is no envelope to carry | FR-07.4 |
+| 400 | `destination_not_allowed` | A **request-path** target is not on the allowlist | FR-07.4 |
+| 400 | `destination_address_blocked` | Target resolved to a loopback, link-local or private address | NFR-21.1 |
+| 400 | `destination_port_not_allowed` | Target port is not 443 | NFR-21.3 |
 | 407 | `authentication_error` | Non-loopback client presented no or wrong proxy key | existing |
 | 502 | `upstream_unreachable` | The proxy could not reach the upstream | FR-17.1 |
 | 502 | `proxy_internal_error` | Fault inside the proxy | FR-17.3 |
@@ -57,9 +58,51 @@ State, then the command or setting to change.
 
 A destination refusal carries **no** id: the user can act on it, so FR-17.2 applies instead.
 
+## Why refusals are `400` on the request path — measured
+
+Three statuses were tried with an identical body, and the client behaves differently
+enough that this is not a style choice:
+
+| Status | What the user is shown |
+| --- | --- |
+| `403` | **"Failed to authenticate."** then the message. The client reads 403 as its own credential failing |
+| `502` | Nothing immediately — treated as transient and retried, for a destination that will never be allowed |
+| **`400`** | `API Error: 400` then the message, verbatim. No misleading prefix, no retry |
+
+`400` also matches what this codebase already does for a blocked model
+(`src/server.js:471`), which is the same shape of failure: a policy decision the proxy
+made, that no retry will change.
+
+`403` remains correct on the **CONNECT** path, where it is a proxy status line and never
+becomes an API error — F09 measured a client carrying on normally after refused CONNECTs.
+The two paths differ, and the table above splits them.
+
+## Why `403` is used on CONNECT, when the codebase avoids it elsewhere
+
+`src/server.js` deliberately does **not** pass an upstream `403` to the client:
+
+> Claude Code reads a 403 as "your session is dead", drops its own login and asks for a
+> re-login over an account problem it has no part in.
+
+That lesson is about a `403` on the **API response** path. These three are `403` on a
+**CONNECT**, which F09 measured: refused CONNECTs were answered `403` and the client
+carried on normally.
+
+The tension is real and the measurement is thin — one `-p` run, telemetry hosts only
+(ASM-23). Two things keep it bounded:
+
+- The upstream host is **always** `intercept`, so it can never be refused. The dangerous
+  case cannot arise from this policy.
+- If a client is ever seen dropping its login after a refusal, the fix is a different
+  status, not a different message — the class names above stay.
+
 ## Headers
 
 No new headers. `retry-after` keeps its current meaning on 429.
+
+**`error.type` does not reach the user — measured (ASM-29).** The client printed the
+`message` verbatim and showed no sign of the type. So `message` must carry the whole story
+on its own, and `error.type` is an operator and log affordance, not the user's channel.
 
 ## Not in scope
 

@@ -70,7 +70,12 @@ call and spends no quota, but it is the difference between "all traffic" and "al
 > settings are read.
 
 > **FR-03.3** Writing `settings.json` MUST merge into any existing `env` block and preserve
-> every unrelated key. It MUST NOT rewrite the file wholesale.
+> every unrelated key **and every comment**. It MUST NOT rewrite the file wholesale.
+
+Comments are the part "every unrelated key" misses. A `settings.json` containing a `//`
+comment was accepted and the session ran normally (ASM-18), so users may reasonably have
+them — and `JSON.parse` followed by `stringify` drops them silently, which is the worst
+shape a data-loss bug can take.
 
 The file holds the user's own settings — `model`, `theme`, `autoUpdatesChannel` and so on.
 Losing them to enrolment would be a poor trade for a proxy.
@@ -94,6 +99,13 @@ enrolment is how a user gets back to work without the operator
 
 Certificate **files** are placed in M1 even though mTLS enforcement is M2
 ([#6](../../../issues/6)). Placing them now means M2 does not have to redo enrolment.
+
+> **FR-16.3** The device private key MUST be generated on the device. Only a certificate
+> signing request may leave it.
+
+"Places `device.key`" left the generator unstated (ASM-27), and the two readings differ in
+what they mean for §9: a key minted on the server and sent down was, for a moment, the
+server's. Deciding it now costs nothing and stops M2 from inheriting the weaker shape.
 
 > **FR-16.2** For self-hosting the operator copies the artifacts themselves; an
 > authenticated distribution channel is **not** an M1 requirement. It becomes one in M3,
@@ -147,9 +159,11 @@ The client certificate variables are placed in M1 and unused until
 | Enrolment writes the `env` block to the user-scope path | FR-03.1 |
 | Enrolment emits the shell export | FR-03.2 |
 | An existing `settings.json` keeps every unrelated key, and an existing `env` block is merged | FR-03.3 |
+| A `settings.json` containing comments still has them afterwards | FR-03.3, ASM-18 |
 | Running enrolment twice produces byte-identical output | FR-03.4 |
 | `unenrol` restores the file to its pre-enrolment bytes and removes the artifacts | FR-03.5 |
 | The private key is written with owner-only permissions | FR-16.1 |
+| The private key is generated locally; only a CSR is transmitted | FR-16.3 |
 | A session seen only after settings load is reported as partially configured | FR-18.1 |
 
 FR-03.3 and FR-03.5 want a fixture of a realistic settings file — the one on this machine

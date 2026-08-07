@@ -39,6 +39,8 @@
   - NFR-17.4 — leafDays and renewBeforeDays are configurable under proxy.certs, with defaults shorter than today's 825
   - A leaf inside the window that covers the hosts is still reused — no needless churn
   - docs/configuration.md documents proxy.certs
+  - NFR-17.5 — the renewal check is not memoised for the process lifetime, and a replaced chain reaches new connections without a restart; both certsPromise (server.js:182) and serverPromises (mitm.js:131) must be addressed
+  - A connection open across a replacement is not disturbed (ASM-17: TLS validates at handshake, measured)
 
 ### task-2
 - **Agent**: backend
@@ -60,6 +62,8 @@
   - FR-03.5 — unenrol removes exactly what was added and leaves the machine reaching the upstream directly
   - FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only
   - Tests use a fixture settings file carrying unrelated keys, not an empty object
+  - FR-03.3 — a settings.json containing comments still has them afterwards (ASM-18: comments are accepted by the client, and JSON.parse/stringify drops them silently)
+  - FR-16.3 — the device private key is generated on the device; only a CSR leaves it (ASM-27 left the generator unstated)
 
 ### task-3
 - **Agent**: backend
@@ -77,7 +81,7 @@
   - FR-07.1 — every destination is classified intercept, tunnel or refuse, defaulting to refuse
   - FR-07.2 — intercept applies only to the configured upstream host
   - FR-07.3 — tunnel applies only to an allowlist held as configuration data
-  - FR-07.4 — a refusal answers 403 naming the host and opens no socket to it
+  - FR-07.4 — a refused CONNECT answers 403 and opens no socket; a refusal on the request path answers 400, not 403 (measured: 403 makes the client print "Failed to authenticate", 502 is retried)
   - FR-07.5 — the shipped allowlist is composed by running a client with it active; each entry records why it is there; what was refused during that run is recorded in the PR
   - FR-07.6 — the www.example.org intercept is removable, and off by default when proxy.host is not loopback
   - NFR-20.1 — a non-loopback proxy.host with no proxy.apiKey fails at startup naming the missing setting
@@ -91,6 +95,9 @@
   - NFR-26 — the address tests exercise boundaries, not one member per class: the edges of 127.0.0.0/8, 169.254.169.254 itself, the 172.16-172.31 limits, and IPv4-mapped IPv6 forms
   - NFR-07 — an SSE response survives the new path; no idle timeout is introduced below the client watchdogs
   - NFR-06 — resolution does not add a DNS lookup per request; results are reused for the life of a tunnel at minimum, and the measured headroom (F07, F08) is not spent
+  - NFR-21.5 — a name resolving to any blocked address is refused even when it also resolves to a permitted one
+  - NFR-21.6 — the blocked set is enumerated, not sampled: 10/8, 127/8, 169.254/16, 172.16-31, 192.168/16, 100.64/10, 0/8, ::1, fc00::/7, fe80::/10, and IPv4-mapped forms
+  - FR-07.3 — allowlist entries are exact hostnames; no wildcard form is introduced
 
 ### task-4
 - **Agent**: backend
@@ -110,6 +117,8 @@
   - FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request
   - NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly
   - Existing 403, 429 and pin tests still pass unchanged
+  - The message carries the whole story on its own — error.type may reach the operator and not the user (ASM-29)
+  - FR-17.1 — the message carries the whole story; error.type does not reach the user (ASM-29, measured)
 
 ### task-5
 - **Agent**: backend

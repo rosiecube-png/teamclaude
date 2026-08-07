@@ -10,7 +10,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 | | |
 | --- | --- |
 | Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
-| Assumptions | 14 — 6 verified, 7 unverified, 1 known false — §4.3 |
+| Assumptions | 43 — 14 measured, 8 source-read, 4 deferred, 17 unverified or false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Risks | 8 rated, owned, with residual — §10 |
 | Measured findings | 18 — §2 |
@@ -90,9 +90,9 @@ What "finished" means. Each is checkable.
 
 | | Criterion |
 | --- | --- |
-| **G-1** | A machine is enrolled and `claude` works with **no resident process** on it |
+| **G-1** | A machine is enrolled and `claude` works with **no process of ours** resident on it. The client may start its own supervisor for background agents (F15); that is not ours to remove (ASM-33) |
 | **G-2** | Every request that spends quota is attributed to the account that served it |
-| **G-3** | No request is ever served with an account belonging to a different person |
+| **G-3** | No request is ever served with an account belonging to a different person — **including via a colliding client-supplied session id** (ASM-31) |
 | **G-4** | A device can be revoked without disturbing that person's other devices |
 | **G-5** | Pooling *N* accounts yields materially more headroom than one — the premise (ASM-09 is the open risk) |
 | **G-6** | When the service is unreachable, the failure is legible and recovery does not need the operator |
@@ -236,6 +236,18 @@ Four registers, plus the risk register in §10. Every entry traces to a finding,
 implementation, or an issue — nothing here is stated without a source. The gap analysis in
 §4.5 says which already exist in the codebase.
 
+**Evidence classes.** Every ASM entry carries one, because the first sweep treated a
+citation as verification and a citation to someone else's documentation is not that.
+
+| Class | Means | Can it be wrong? |
+| --- | --- | --- |
+| **measured** | A run against a real client here | Only if the run was unrepresentative |
+| **source-read** | Read out of this repository, with a line cited | No, for the state of that line |
+| **deferred** | Taken from vendor documentation and never tested here | **Yes** — it bounds what we support on someone else's word |
+| **unverified** | Asserted, with nothing behind it | Yes |
+
+`deferred` is the class that hid: three claims sat behind links and read as settled.
+
 **Identifiers.** One scheme, declared here so nothing invents another. A sub-requirement
 extends its parent (`FR-07.3`) rather than opening a new space — the specs under
 [`specs/`](specs/) decompose these IDs, they do not replace them.
@@ -335,7 +347,7 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-03** | Shell env plus user-scope `settings.json` captures all traffic | ✅ F14 — 9 of 9 paths |
 | **ASM-04** | Background agents are reachable by configuration | ✅ F15, F17 — user scope and shell env both reach them; **project scope does not** (F16) |
 | **ASM-05** | One account may serve concurrent sessions | ✅ F18 — production use |
-| **ASM-06** | Device auth survives an edge that terminates outer TLS | ✅ F08 |
+| **ASM-06** | Device auth survives an edge that terminates outer TLS | ✅ F08 — the edge terminated with a public certificate, forwarded a plaintext CONNECT, and `CN=device-01` still arrived at the backend on `POST /v1/messages` |
 | **ASM-07** | macOS behaves as Windows and Linux do | ❌ **unverified** — §8.5 |
 | **ASM-08** | Interactive mode produces the same request pattern as `-p` | ❌ **unverified** — §8.5 |
 | **ASM-09** | A datacenter egress IP is treated like any other | ❌ **unverified** — §5, backlog by decision |
@@ -343,6 +355,35 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-11** | The upstream's response contract is stable | ❌ **unverified** — quota tracking parses `anthropic-ratelimit-unified-*`. If those headers change, rotation degrades **silently**. The server-side twin of ASM-10, and nothing watches for it |
 | **ASM-12** | Headless token refresh keeps working without user interaction | ❌ **unverified** — re-login prompts are already reported in ordinary use |
 | **ASM-13** | Enrolment leaves both configuration locations in place | ❌ **unverified** — FR-03 needs both; if one is lost the leak is silent (F16). Nothing detects the half-configured state |
+| **ASM-15** | Regenerating a certificate takes effect | ❌ **false** — `certsPromise` (`src/server.js:182`) and `serverPromises` (`src/mitm.js:131`) are both memoised for the process lifetime, and the terminating server bakes the cert in at creation. Nothing re-reads until restart |
+| **ASM-16** | A leaf swap needs no client action | ✅ **verified** — clients are handed `caPath` only (`src/index.js:648`, `:718`); a fresh leaf under the same CA validates with no client change |
+| **ASM-17** | An expiring certificate does not disturb work in flight | ✅ **measured** — an established TLS connection carried traffic 2s past `notAfter`; a new connection was refused with `CERT_HAS_EXPIRED`. TLS validates at handshake |
+| **ASM-18** | `~/.claude/settings.json` is plain JSON | ❌ **false** — a file containing a `//` comment was accepted and the session ran. `JSON.parse`/`stringify` would drop it silently, so FR-03.3's "preserve every unrelated key" is not sufficient |
+| **ASM-19** | The private-address list is complete | ❌ **unverified** — the spec names `127.0.0.0/8`, `169.254.169.254` and `172.16`–`172.31`. It does not name `100.64.0.0/10`, `0.0.0.0/8`, `fc00::/7`, `fe80::/10` or `::1` |
+| **ASM-20** | A hostname resolves to addresses of one kind | ❌ **unverified** — `lookup(host, {all:true})` can return public and private together. Whether any private address refuses, or a public one may be chosen, is unstated |
+| **ASM-21** | Allowlist entries are exact hostnames | ❌ **unverified** — nothing says whether `*.claude.ai` is expressible, and the client reaches several `claude.ai` and `anthropic.com` names |
+| **ASM-22** | The certificate directory has one writer | ❌ **unverified** — `ensureCerts` is also called from the CLI (`src/index.js:648`, `:718`), so `teamclaude run` can regenerate while a server holds a memo of the old chain |
+| **ASM-23** | Returning `403` for a refused destination is safe | ❌ **measured false on the request path** — a 403 carrying our envelope produced *"Failed to authenticate."* before the message, which is the misreading `src/server.js` already avoids. On the **CONNECT** path 403 is fine (F09). The contract now uses `400` on the request path, matching the blocked-model precedent (`src/server.js:471`) |
+| **ASM-24** | Prompt content is never persisted | ❌ **false** — `src/crash-log.js` writes `err.stack` on a fatal error, and its own comment says "a stack can carry request context". Mode `0600`, but §9 did not list it |
+| **ASM-25** | Request logs are short-lived | ❌ **false** — nothing deletes them. `grep` for `unlink`, `rmSync`, `retention`, `prune` across `src/server.js` and `src/request-log.js` finds nothing; `logDir` grows without bound. §9's retention column described the requirement, not the code |
+| **ASM-26** | The quota state file is low-sensitivity and disposable | ❌ **false** — `exportQuotaState` (`src/account-manager.js:1276`) writes `accountUuid`, `orgUuid`, `orgName` and `name` beside the counters, and the display name is derived from the account email. It carries identity, not just quota |
+| **ASM-27** | The device private key only ever exists on the user's machine | ❌ **unverified** — FR-16.1 says enrolment "places" `device.key`, without saying who generates it. If the server mints the pair and sends both, the server held the private key and §9's classification is wrong. A key generated on the device with only a CSR leaving it would hold; nothing states which |
+| **ASM-28** | A partial unenrol degrades safely | ✅ **measured** — with the proxy removed and `NODE_EXTRA_CA_CERTS` left pointing at a deleted file, the client warned (`Ignoring extra certs … load failed`) and continued. The dangling half does not block direct operation |
+| **ASM-29** | Clients act on `error.type` | ❌ **measured false** — the client printed the `message` verbatim and showed no sign of the type. FR-17.1's discriminator is an operator and log affordance; the `message` has to carry the whole story |
+| **ASM-30** | The certificate directory is written by one process | ❌ **unverified** — same as ASM-22, restated at the file level: `ensureCerts` does an atomic write per file (`src/mitm.js`), so two writers can interleave a CA from one run with a leaf from another |
+| **ASM-31** | Session affinity cannot cross tenants | ❌ **unverified** — sessions are keyed by `x-claude-code-session-id`, a header the **client** supplies (`src/server.js:407`), and the map lives on `AccountManager` (`recordSession`, `:364`). It holds only if the per-tenant `AccountManager` in [#4](../../issues/4) also scopes the session map. Nothing says so, and G-3 does not list it |
+| **ASM-32** | Quota state is current when the process dies | ❌ **false** — it is written on an interval (`persistQuotaState`, `src/index.js:188`), not on change, so up to one interval is lost. Relevant to NFR-23: the RPO differs by asset, and only tokens are written as they change |
+| **ASM-33** | "No resident process" describes the client machine | ⚠️ **imprecise** — F15 measured the client cold-starting its own supervisor daemon for background agents. The claim is true of **our** software and false of the machine; §1 and G-1 do not distinguish |
+| **ASM-34** | A config edited while the server runs is picked up | ⚠️ **partly** — `POST /teamclaude/reload` and `atomicConfigUpdate` cover accounts and the sx key (`src/index.js:249`). Whether the M1 additions — the allowlist, certificate lifetimes — are reloadable is unstated, and they are the settings an operator most wants to change under load |
+| **ASM-35** | The client cannot chain proxies (CON-01) | ⚠️ **deferred** — derived from the documented variable set, never tested. If some form of chaining exists, CON-01's "cannot use the service" is too strong and an enterprise user is being turned away on a reading |
+| **ASM-36** | Cloud sessions ignore the certificate variables (CON-04) | ⚠️ **deferred** — taken from the vendor's network documentation; no cloud session was ever run here. It bounds what the product supports, so it is worth more than a citation |
+| **ASM-37** | Buffers are short-lived, so "discard immediately after the response" is nearly true today | ❌ **false** — the body is buffered whole so it can be replayed on another account, so it is held across **every retry**, and `holdSeconds` keeps it for the entire wait while all accounts are exhausted (`src/server.js:445`). The window is bounded by the hold budget, not by the response |
+| **ASM-38** | Crash reporting does not capture request bodies, as §7 requires | ❌ **false today** — `src/crash-log.js` writes `err.stack`, and its own comment says a stack can carry request context. §7 stated the requirement as though it described the code (see also ASM-24) |
+| **ASM-39** | The client version reaches the rotation path | ✅ **measured** — `user-agent: claude-cli/2.1.223 (external, sdk-cli)` on `POST /v1/messages`, alongside `x-app: cli`. FR-10's carrier is confirmed, and it was an assumption until this run |
+| **ASM-40** | The version is the only client identity on that path | ❌ **false, and useful** — the same request carries `x-stainless-package-version`, `x-stainless-runtime-version` and `anthropic-beta` with dated feature flags. A canary (NFR-10) can watch the beta list and the SDK version, not just the CLI version, and those move independently |
+| **ASM-41** | `downloads.claude.ai` carries self-update | ⚠️ **deferred** — vendor network documentation. Testing it needs a version-behind client and a real update cycle, which one run cannot produce. FR-07.3 allowlists it on that basis |
+| **ASM-42** | The client's SSE watchdog thresholds are 180s / 300s | ⚠️ **deferred** — vendor documentation. NFR-07 sizes the edge timeout against numbers never observed here |
+| **ASM-43** | A `502` refusal would be a safe alternative | ❌ **measured false** — with the same body under `502` the client showed nothing immediately and retried, for a destination that will never be allowed. Retrying a policy decision is worse than reporting it |
 | **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
 
 ### 4.4 Constraints — CON
@@ -359,7 +400,7 @@ Fixed properties of the design or its environment. Not problems to solve — bou
 | **CON-06** | Users upload their own refresh tokens to a third party | A grey area under the consumer terms. **Does not arise when self-hosted.** Otherwise mitigate with explicit consent and NFR-11; needs legal review |
 | **CON-07** | The quota belongs to the accounts, not to the service | The product redistributes; it cannot create headroom. Everything rests on rotation clearing a limit (G-5, ASM-09) |
 | **CON-08** | No revenue | NFR-03, NFR-08 and NFR-15 all carry ongoing cost against donations. Either the community-hosted mode is scoped to what a volunteer can carry, or it is not offered |
-| **CON-09** | Blind-tunnelled traffic is opaque by design | It cannot be audited or attributed. Whatever FR-07 admits to the allowlist is outside every other guarantee here |
+| **CON-09** | Blind-tunnelled **payloads** are opaque by design | The destination is not: host and port are known at CONNECT and already logged on failure (`src/mitm.js:204`), so this traffic can be attributed and rate-limited even though its content cannot be inspected. Only the content sits outside the guarantees here |
 | **CON-10** | The client is not ours | Its behaviour can change under the service at any time (ASM-10), and there is no way to pin what users run beyond refusing old versions (FR-10) |
 
 ### 4.5 Gap analysis
@@ -572,8 +613,8 @@ on another account, so this cannot be avoided.
 | Item | Requirement |
 | --- | --- |
 | Request logging | Off by default. When on: per-tenant encryption, short retention, automatic deletion |
-| Memory | Discard buffers immediately after the response; disable core dumps |
-| Crash and error reporting | Must not capture request bodies |
+| Memory | Discard buffers immediately after the response; disable core dumps. **Not today**: the body is held across every retry and for the whole `holdSeconds` wait, because it must be replayable on another account (ASM-37) |
+| Crash and error reporting | Must not capture request bodies. **Not today**: `crash-log.js` writes a stack that its own comment says can carry request context (ASM-38) |
 | Token storage | Envelope encryption — currently plaintext JSON at `0600` |
 | Legal | Privacy policy, processor disclosure, DPA |
 | Background features | Keep-warm and the quota probe are **not offered** in a hosted product — an always-on server making them on its own reads as unattended automation |
@@ -621,7 +662,7 @@ the design assumes.
 | --- | --- |
 | Minimum supported version, published | Below it, refuse with an error naming the version and how to update |
 | Detect the client version per request | The user agent is the obvious carrier; confirm it reaches the rotation path |
-| Version canary before adopting a release | A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it |
+| Version canary before adopting a release | A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it. Watch more than the CLI version: the same request carries `x-stainless-package-version` and a dated `anthropic-beta` list, and those move independently (ASM-40) |
 
 The canary is the durable half. Pinning to "latest" trades an old-client problem for a
 new-client one: the client can change under the service at any time, so the measurements
@@ -662,7 +703,10 @@ register (F-1) and as a missing architecture information view (H-1).
 
 Classification: **critical** means loss or disclosure is unrecoverable for the user.
 
-| Asset | Where it lives | Class | Retention | Protected by |
+**Retention is what the requirements ask for, not what the code does today.** ASM-25 records
+the gap: nothing deletes a request log. The column is a target until NFR-05 lands.
+
+| Asset | Where it lives | Class | Retention (target) | Protected by |
 | --- | --- | --- | --- | --- |
 | OAuth refresh tokens | Config store, at rest | **critical** | Life of the account registration; destroyed on offboarding | NFR-04 envelope encryption, NFR-11 audit, FR-14 deletion |
 | OAuth access tokens | Memory; written back on refresh | **critical** | Until expiry | NFR-04 |
@@ -671,12 +715,13 @@ Classification: **critical** means loss or disclosure is unrecoverable for the u
 | Proxy API key | Config store | high | Until rotated — **no rotation path today** | NFR-17, [#24](../../issues/24) |
 | **Prompt and file content** | Server memory, in plaintext, buffered whole | **critical** | Discarded after the response — **not persisted** | CON-02, NFR-05 logging off by default |
 | Request logs, when enabled | Disk | **critical** — contains the above | Short, automatic deletion | NFR-05, NFR-18 residency |
-| Observed quota state | Disk, `teamclaude.state.json` | low | Disposable; re-learned from traffic | — |
+| Observed quota state | Disk, `teamclaude.state.json` | **medium** — carries `accountUuid`, `orgName` and the email-derived display name beside the counters (`src/account-manager.js:1276`), so it is identity, not just quota (ASM-26) | Counters are disposable; the identity is not | — |
+| Crash log | Disk, `teamclaude-crash.log`, mode `0600` | **critical** — a stack can carry request context, which is why it is `0600` (`src/crash-log.js`) | Until deleted by hand (ASM-24) | mode only |
 | Account identity, org names | Config store | medium | Life of the registration | NFR-11 |
 
 **Traffic that leaves without being held.** Blind-tunnelled destinations (FR-07.3) are
-spliced, never inspected — CON-09 records that this is by design, which also means it is
-outside every guarantee in this table.
+spliced, never inspected. CON-09 records that the **payload** is by design outside this
+table; the destination is not, and is available for attribution and rate limiting.
 
 ### Third parties — NFR-24
 
@@ -762,6 +807,38 @@ Repeat across the environment axes: client version, injection method (shell vs
 Both are §8.5. Everything else once listed here has since been measured or resolved:
 background agents (F15–F17), concurrent sessions on one account (F18), and corporate
 proxy nesting (§8.6, a limitation rather than an open question).
+
+### What the assumption sweep can and cannot establish
+
+Forty-two assumptions were recovered from documents that read as fact. The method that
+found them, and its limits, so the next sweep does not repeat the same hole.
+
+**The method.** Extract every absolute claim about behaviour — `never`, `nothing`, `only`,
+`cannot`, `every` — and classify each by what stands behind it. 71 were found across the
+specs and contracts.
+
+**The hole in the first pass.** Only *unsourced* claims were checked. A claim with a
+citation was treated as settled — but a citation to vendor documentation is deference, not
+verification. Three claims sat behind links and read as established: CON-01, CON-04, and
+`downloads.claude.ai` carrying self-update. They are now the `deferred` class.
+
+**What this cannot do.**
+
+| | |
+| --- | --- |
+| Prove exhaustion | No count of found assumptions bounds the unfound ones. "The sweep stopped producing new results" is a statement about the sweep |
+| Verify an absence in a closed binary | CON-01 claims the client has *no* chaining mechanism. That can be bounded by the documented surface and never proven from outside |
+| Survive a change | Every `source-read` entry is true of a line at a commit. The code moves; ASM-10 already records that the client does too |
+| Reach what was never written down | Six of these were found by **measuring**, not by reading — ASM-17, ASM-28, ASM-32, ASM-36, ASM-37, ASM-39. A text sweep cannot find an assumption nobody wrote a sentence about |
+
+That last row is the real limit. The sweep finds assumptions that were *stated*
+carelessly. Assumptions that were never stated at all only surface when something is run,
+which is why measurement kept producing findings after the reading had gone quiet.
+
+**What is enforced instead.** `test/requirements-coverage.test.js` requires every ASM entry
+to carry a verdict and its grounds. That does not prove the set is complete; it makes an
+unchecked entry fail a run rather than sit quietly, which is the difference between a gap
+and a known gap.
 
 ### Findings resting on a single observation
 
