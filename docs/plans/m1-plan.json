@@ -156,12 +156,14 @@
       "artifacts_expected": [
         "src/enrol.js",
         "src/claude-env.js",
-        "test/enrol.test.js"
+        "test/enrol.test.js",
+        "src/x509.js"
       ],
       "scope": [
         "src/enrol.js",
         "src/claude-env.js",
-        "test/enrol.test.js"
+        "test/enrol.test.js",
+        "src/x509.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
@@ -170,7 +172,7 @@
       "tdd_evidence_required": true,
       "test_approach_rationale": "Merge, idempotence and reversibility are exactly the properties that break silently and are cheap to state as failing tests first. FR-03.4 and FR-03.5 are byte-comparison assertions.",
       "alternative_verification": "",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "task-3",

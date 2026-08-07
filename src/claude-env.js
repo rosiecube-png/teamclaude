@@ -30,13 +30,18 @@ export function encodePinComponent(s) {
 // `/tc-acct/` prefix. TC_ACCT itself is then unset, so the pin does not leak
 // into claude or anything it spawns — same reasoning as `run` deleting it from
 // the child environment.
-export function buildClaudeEnvLines({ port, useMitm = true, caPath = null, holdSeconds = 0, account = null, proxyApiKey = '' }) {
+// `host` and `scheme` default to what a local proxy has always been, so nothing
+// about `teamclaude env` or `run` changes. Enrolment against a hosted proxy
+// (#19) passes its own, and the settings file it writes is derived from these
+// same lines — one source, so the two configuration locations cannot disagree.
+// `certPath`/`keyPath` are placed by enrolment and unused until mTLS (#6).
+export function buildClaudeEnvLines({ port, useMitm = true, caPath = null, holdSeconds = 0, account = null, proxyApiKey = '', host = '127.0.0.1', scheme = 'http', certPath = null, keyPath = null }) {
   const lines = [];
   const pin = (account || '').trim();
 
   if (useMitm) {
     const userinfo = pin ? `${encodePinComponent(pin)}:${encodePinComponent(proxyApiKey || '')}@` : '';
-    const proxyUrl = `http://${userinfo}127.0.0.1:${port}`;
+    const proxyUrl = `${scheme}://${userinfo}${host}:${port}`;
     lines.push(
       `export HTTPS_PROXY=${proxyUrl}`,
       `export HTTP_PROXY=${proxyUrl}`,
@@ -46,6 +51,8 @@ export function buildClaudeEnvLines({ port, useMitm = true, caPath = null, holdS
       'export no_proxy=localhost,127.0.0.1,::1',
     );
     if (caPath) lines.push(`export NODE_EXTRA_CA_CERTS=${caPath}`);
+    if (certPath) lines.push(`export CLAUDE_CODE_CLIENT_CERT=${certPath}`);
+    if (keyPath) lines.push(`export CLAUDE_CODE_CLIENT_KEY=${keyPath}`);
     // Clear any stale base-URL so the two modes don't stack in one shell.
     lines.push('unset ANTHROPIC_BASE_URL');
   } else {

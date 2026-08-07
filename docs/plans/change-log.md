@@ -203,6 +203,76 @@ owned now.
 
 ---
 
+## 2026-08-07 — task-2, client enrolment ([#19](../../issues/19))
+
+FR-03.1 to FR-03.5, FR-16.1 and FR-16.3. New capability: nothing in `src/` read or wrote
+`~/.claude/settings.json` before this.
+
+| | |
+| --- | --- |
+| Register | FR-16.3's generator is now decided in code, not only in prose (ASM-27) |
+| Spec | `m1-enrolment.md` — §6 keeps FR-18.1's open mechanism, which is task-5's |
+| Plan | task-2 `status: done`; scope gained `src/x509.js` |
+| Board | regenerated |
+| Contract | n/a — S3 decided the boundary and it was built as decided |
+| Governance | n/a |
+| Issue | [#19](../../issues/19) |
+| Test | `test/enrol.test.js`, 21 cases |
+| Risks | n/a |
+
+### settings.json is edited as text, not parsed
+
+FR-03.3 requires every unrelated key **and every comment** to survive. `JSON.parse`
+followed by `stringify` drops comments silently, which is the worst shape a data-loss bug
+takes, and the file holds the user's own `model`, `theme` and the rest. So the document is
+scanned and only the spans that must change are rewritten — strings and comments are
+skipped as units, because a brace inside either would otherwise close a block that never
+opened.
+
+The `env` written to `settings.json` is **derived from the shell lines** rather than
+written twice. FR-03 exists because the two locations cover different windows; letting
+them disagree about *what* they set would have been a third failure mode. A mutation that
+composed the settings env independently is caught by two tests.
+
+### The certificate request was verified against an independent parser
+
+`createCsr` builds PKCS#10 by hand — checking it with the code that wrote it proves
+nothing. `openssl` was asked instead:
+
+```
+Certificate request self-signature verify OK
+subject=CN=device-abc
+```
+
+and the request's public key hashes identically to the private key that stayed on disk,
+and `openssl x509 -req` signs it into a real certificate. FR-16.3 holds: only the request
+can leave.
+
+### Two mutations survived the first pass
+
+Eight mutations were run against the enrolment tests. Six failed as intended; two did not,
+and both were genuine gaps rather than false alarms:
+
+| Survived | Why the tests missed it |
+| --- | --- |
+| `cutMember` leaves the comma behind | Every removal case removed a *trailing* member, which takes the comma before it instead. The middle-member branch had no test |
+| `endOfValue` counts braces without skipping strings | The awkward string was at the top level, where the scan returns before it counts a brace. Only a nested object reaches the depth counter |
+
+Both now have a test, and both mutations fail against them.
+
+### The overlap guard was narrowed, deliberately
+
+task-2 needed `src/x509.js` for the certificate request — the ASN.1 primitives live there
+and are not exported, so building it elsewhere meant a second copy of them. task-1 owns
+that file in the same tier, and the guard refused.
+
+It refused correctly for the wrong situation: the constraint is about two agents editing
+one file *at the same time*, and task-1 was finished. The guard now skips tasks marked
+done, and its mutation proof was retargeted at task-6 and task-7, which are both still
+open — a mutation using finished tasks would have proved nothing.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -246,6 +316,10 @@ cold. ISO 21500 wants both directions.
 | `src/server.js` | `certsPromise` → in-flight only ← NFR-17.5 · revalidating unconditionally ← 0.386 ms, measured |
 | `docs/configuration.md` | `proxy.certs` ← NFR-17.4 · the reason table ← NFR-17.3 · no CA lifetime ← [#5](../../issues/5) |
 | `test/cert-lifetime.test.js` | Every case names its requirement; the four the mutations proved are listed above |
+| `src/enrol.js` | Exists at all ← FR-03 · text editing rather than parsing ← FR-03.3 and ASM-18 · module boundary ← S3 · settings env derived from the shell lines ← FR-03 wanting the two locations to agree |
+| `src/claude-env.js` | `host`/`scheme` ← FR-03.2 against a hosted proxy · `certPath`/`keyPath` ← FR-16.1, unused until [#6](../../issues/6) · still pure ← S3 |
+| `src/x509.js` (again) | `createCsr` ← FR-16.3 · verified with openssl ← hand-built DER checked by its own writer proves nothing |
+| `test/requirements-coverage.test.js` (again) | *a task owns the files its criteria name* ← task-1's scope defect · the overlap guard skipping done tasks ← task-2 needing a file task-1 had finished with |
 
 **Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,
 which is how the first register was built and why the audit found eleven gaps in it.
