@@ -69,12 +69,12 @@
 - **Agent**: backend
 - **CLI**: claude
 - **Title**: CONNECT and forward policy: allowlist, address policy, fail-closed listener
-- **Status**: pending
+- **Status**: done
 - **Priority**: 3
 - **Dependencies**: task-1
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/mitm.js, src/server.js, src/index.js, test/connect-policy.test.js, docs/configuration.md
+- **Scope**: src/mitm.js, src/server.js, src/index.js, test/connect-policy.test.js, docs/configuration.md, src/destination-policy.js
 - **Test Approach**: tdd (unit, integration)
 - **Description**: The tunnel branch dials any host on any port with no filtering (src/mitm.js:175, :197), and relayHttpForward (src/server.js:247) is a second unrestricted path. connectAuthorized returns true when no proxy.apiKey is set (src/mitm.js:294), failing open. Implement docs/specs/m1-hardening.md. Emit refusals against docs/plans/contracts/m1-error-envelope.md.
 - **Acceptance Criteria**:

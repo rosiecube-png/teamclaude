@@ -273,6 +273,98 @@ open — a mutation using finished tasks would have proved nothing.
 
 ---
 
+## 2026-08-07 — task-3, where the proxy may connect ([#8](../../issues/8))
+
+FR-07.1 to FR-07.6, NFR-20.1, NFR-20.2, NFR-21.1 to NFR-21.6. The largest M1 task, and the
+one with a security consequence.
+
+| | |
+| --- | --- |
+| Register | ASM-19, ASM-20, ASM-21 resolved by building them · ASM-30 unchanged |
+| Risks | RSK-05 treatment is now code rather than a plan |
+| Spec | `m1-hardening.md` — §6's open allowlist question is discharged by measurement |
+| Plan | task-3 `status: done`; scope gained `src/destination-policy.js` |
+| Board | regenerated |
+| Contract | n/a — S1 decided the seam and it was built as decided; the three refusal reasons map one-to-one onto the error envelope, and a test asserts there is no fourth |
+| Governance | n/a |
+| Issue | [#8](../../issues/8) |
+| Test | `test/connect-policy.test.js`, 33 cases |
+| Docs | `docs/configuration.md` — `proxy.connect` and a **Where the proxy may connect** section |
+
+### FR-07.5 — the allowlist was composed by running a client
+
+Not guessed. Two `claude -p` runs through a report-only proxy — one plain, one using tools
+— while a *hosted* policy classified each CONNECT alongside and recorded what it would
+have decided:
+
+```
+intercept              api.anthropic.com:443
+refuse (not_allowed)   mcp-proxy.anthropic.com:443
+refuse (not_allowed)   mcp.notion.com:443
+```
+
+A third run with the composed list **enforced** completed normally — the client replied
+`enforced-ok` — and issued exactly one refusal:
+
+```
+[TeamClaude] refused CONNECT mcp.notion.com:443 — mcp.notion.com is not on the allowlist
+```
+
+**That refusal is the finding.** `mcp.notion.com` comes from this machine's `.mcp.json`: a
+user's own MCP server, which no release can know about. It is the concrete reason FR-07.3
+requires the allowlist to be data rather than code, and it is not in the spec's observed
+table — which listed telemetry hosts and `downloads.claude.ai`, neither of which appeared
+in these windows.
+
+`downloads.claude.ai` ships allowed anyway, and the entry says so: the update check did not
+fire in the window, but refusing it breaks self-update, which then collides with the client
+version floor ([#16](../../issues/16)) — clients drift below it and are locked out with no
+way back.
+
+### Two defaults were wrong, and the existing suite said so
+
+The address policy and the port restriction were written to be closed unconditionally.
+Three blind-tunnel tests failed immediately, and they were right to: acceptance criterion
+13 is *with `proxy.host` on loopback every current behaviour is unchanged*, and the local
+proxy has tunnelled to `127.0.0.1` on arbitrary ports since it existed.
+
+Both now derive from `proxy.host` like the rest of the switches. That is what §4 of the
+spec said all along — "bound to loopback, today's behaviour is preserved" — and reading it
+as applying only to the switches listed in its own code block was the error.
+
+### A regression the pin tests caught
+
+Resolving once and dialling `net.connect(port, address)` lost something
+`net.connect(port, name)` had: the fallback between a v6 and a v4 answer. `localhost`
+answers `::1` first here, and a service listening only on `127.0.0.1` became a 502.
+
+Fixed by pinning `lookup` instead of rewriting the target — the verdict carries **every**
+approved address, Node's own connection logic does the fallback, and a second resolution is
+impossible because the resolver never runs again. It also keeps the name, and with it the
+`Host` header and the TLS servername: rewriting the URL to an address would have reached a
+virtual host as an IP it has never heard of. Both egress paths share the one helper.
+
+### NFR-06 — what the check costs
+
+| | |
+| --- | --- |
+| Warm lookup | **0.212 ms** (200 calls, `api.anthropic.com`) |
+| Cold / NXDOMAIN | **6.7 ms** (20 distinct names) |
+
+One resolution per CONNECT, which is one per tunnel — the minimum S1 asked for. No cache
+beyond that: S1 left it to task-3 "with measurements in hand", and 0.212 ms against a TLS
+handshake does not buy an invalidation policy.
+
+### The mutations
+
+Nine were run against the policy. Eight failed as intended. The survivor — feeding an
+unresolved *name* to the address check — still refused the destination, but as
+`address_blocked` rather than `not_allowed`, so the client would be told its destination
+was blocked when DNS is what failed. The reason reaches a client, so the test now asserts
+it.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -319,6 +411,7 @@ cold. ISO 21500 wants both directions.
 | `src/enrol.js` | Exists at all ← FR-03 · text editing rather than parsing ← FR-03.3 and ASM-18 · module boundary ← S3 · settings env derived from the shell lines ← FR-03 wanting the two locations to agree |
 | `src/claude-env.js` | `host`/`scheme` ← FR-03.2 against a hosted proxy · `certPath`/`keyPath` ← FR-16.1, unused until [#6](../../issues/6) · still pure ← S3 |
 | `src/x509.js` (again) | `createCsr` ← FR-16.3 · verified with openssl ← hand-built DER checked by its own writer proves nothing |
+| `src/destination-policy.js` | Exists at all ← S1 · the verdict carrying the address ← NFR-21.2 · the enumerated range list ← NFR-21.6 and ASM-19 · every default derived from `proxy.host` ← criterion 13 and three failing blind-tunnel tests · `SHIPPED_ALLOW` ← FR-07.5, measured · `pinnedLookup` ← a v6/v4 fallback regression |
 | `test/requirements-coverage.test.js` (again) | *a task owns the files its criteria name* ← task-1's scope defect · the overlap guard skipping done tasks ← task-2 needing a file task-1 had finished with |
 
 **Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,

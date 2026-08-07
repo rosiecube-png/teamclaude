@@ -41,6 +41,7 @@ Volatile runtime state (observed quota) is written separately to `teamclaude.sta
 | `proxy.host` | Interface to bind. Defaults to `127.0.0.1` (localhost only). Set to `0.0.0.0` (or override with env `TEAMCLAUDE_HOST`) to accept off-box clients — in which case **set `proxy.apiKey`**, since remote clients must present it (via `x-api-key`, or `Proxy-Authorization` for CONNECT/HTTPS-proxy usage); loopback is always exempt |
 | `proxy.apiKey` | API key clients use to authenticate with the proxy (required for any non-loopback client; the proxy injects real account tokens, so an unauthenticated open port would leak them) |
 | `proxy.tls` | Serve the proxy itself over TLS: `{ "cert": "/path/fullchain.pem", "key": "/path/privkey.pem", "ca": "optional-chain.pem" }`. **Set this whenever `proxy.host` is not loopback** — on a plain listener `proxy.apiKey` travels in clear on every request (`x-api-key`) and every `CONNECT` (`Proxy-Authorization`), and that key is permission to have account tokens injected. Clients then use `https://host:port` (Claude Code accepts an `https://` proxy URL). Paths are re-read only at startup, so reload after an ACME renewal; an unreadable file is a startup error rather than a silent fall back to plaintext |
+| `proxy.connect` | Where the proxy may connect: `{ "allow": [], "allowPrivateAddresses": …, "allowLoopbackClients": …, "restrictPorts": …, "testHost": … }`. **Every default derives from `proxy.host`** — on loopback nothing changes from how the proxy has always behaved; bound anywhere else each one starts closed. See [Where the proxy may connect](#where-the-proxy-may-connect) |
 | `proxy.certs` | Lifetime of the MITM certificate chain the proxy mints for itself: `{ "leafDays": 90, "renewBeforeDays": 30 }` (the defaults). The leaf is replaced once it has fewer than `renewBeforeDays` left, so renewal happens before anything breaks rather than at the moment it does — see [MITM certificates](#mitm-certificates) |
 | `upstream` | Upstream API base URL |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts (TUI settings screen: **Switch threshold**) |
@@ -78,6 +79,45 @@ Volatile runtime state (observed quota) is written separately to `teamclaude.sta
 
 ```bash
 TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
+```
+
+## Where the proxy may connect
+
+A forward proxy will connect wherever it is told to. On loopback that is the point — it is your machine reaching your network. Bound to an interface other people can reach, it means **any client holding `proxy.apiKey` can use this host's network position as their own**, with this host's address as the source: cloud instance metadata on `169.254.169.254`, anything on the private network, services bound to this host's loopback precisely because they are loopback-only, and any port at all.
+
+So every switch below **derives its default from `proxy.host`**. On loopback, nothing changes. Bound anywhere else, each starts closed, and an operator can only arrive at the open combination deliberately.
+
+| Key | On loopback | Bound elsewhere | What it controls |
+| --- | --- | --- | --- |
+| `allow` | ignored — everything tunnels | the only hosts that tunnel | Extra destinations, as **exact hostnames**. No wildcard form: `*.claude.ai` would admit any host an attacker can get named in that zone |
+| `allowPrivateAddresses` | `true` | `false` | Whether a destination may resolve to a loopback, link-local or private address |
+| `restrictPorts` | `false` | `true` | Whether tunnels are limited to port 443 |
+| `allowLoopbackClients` | `true` | `false` | Whether a client on this host's loopback skips `proxy.apiKey`. Off-box that means any sidecar or container sharing the namespace |
+| `testHost` | `true` | `false` | Whether `www.example.org` is answered locally for the credential-free check |
+
+A non-loopback `proxy.host` with no `proxy.apiKey` **fails at startup**. Both auth gates begin "no key configured, allow everything", which is right for a local proxy and an open relay anywhere else.
+
+**The shipped allowlist was composed, not guessed.** Two `claude -p` runs through a report-only proxy reached exactly three hosts; a third run with the list enforced completed normally and refused one destination:
+
+| Host | Disposition | Why |
+| --- | --- | --- |
+| `api.anthropic.com` | intercepted | comes from `upstream`, never listed |
+| `mcp-proxy.anthropic.com` | allowed | observed on every run — remote MCP servers are reached through it |
+| `downloads.claude.ai` | allowed | plugin downloads and self-update. Refusing it breaks self-update, which then collides with a client version floor: clients drift below it with no way back |
+| `mcp.notion.com` | **refused** | a user's own MCP server. No release can know these — add them to `allow` |
+
+That last row is the one to expect. If you use MCP servers, their hosts are yours to list.
+
+Destinations are resolved **once**, and the connection is made to the address that was checked — not to the name. `net.connect(port, host)` resolves the name itself, so checking an address and then connecting by name resolves twice, and the second answer can differ from the first. A name that resolves to **any** blocked address is refused even when it also resolves to a permitted one.
+
+```json
+{
+  "proxy": {
+    "host": "0.0.0.0",
+    "apiKey": "…",
+    "connect": { "allow": ["mcp.notion.com"] }
+  }
+}
 ```
 
 ## MITM certificates

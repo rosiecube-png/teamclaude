@@ -16,9 +16,14 @@ numbering, so "is FR-07 done?" stays answerable.
 Every statement about current behaviour below was read out of the source, and cites where.
 Nothing here is from memory.
 
+> **Built.** FR-07.1 to FR-07.6, NFR-20.1, NFR-20.2 and NFR-21.1 to NFR-21.6 all shipped in
+> task-3 (`src/destination-policy.js`). Sections 1 and 2 describe what was there before it.
+> §6's open allowlist question is discharged — the list was composed by running a client,
+> and what that refused is in §7.
+
 ---
 
-## 1. What the proxy does today
+## 1. What the proxy did before task-3
 
 ### 1.1 The authorisation gate
 
@@ -79,7 +84,7 @@ only the CONNECT tunnel.
 
 ---
 
-## 2. What is wrong with that when hosted
+## 2. What was wrong with that when hosted
 
 ### 2.1 Server-side request forgery
 
@@ -289,9 +294,36 @@ what makes NFR-21.2 implementable at all — see §3.2.
 
 ## 6. Open
 
-- **The allowlist contents are not yet settled** (FR-07.5). Composing it needs a client run
-  with the allowlist active, watching what gets refused. That is implementation work, not a
-  decision to take now.
-- **Interactive mode is unmeasured** (§8.5 of the requirements). Every observation here
-  comes from `-p` and `--bg` runs, so the host list may be incomplete. FR-07.5's validation
-  step is what would catch that.
+- **Interactive mode is unmeasured** (§8.5 of the requirements). Every observation here and
+  in §7 comes from `-p` runs, so the host list may still be incomplete. Nothing in the
+  design depends on it being complete — an operator adds what a release could not know —
+  but the shipped default may be thinner than an interactive session wants.
+- **ASM-30 is unchanged.** Two processes can still interleave writes to the certificate
+  directory; that is task-5's.
+
+---
+
+## 7. What the client runs found (FR-07.5)
+
+Composed, not guessed. Two `claude -p` runs — one plain, one using tools — through a
+report-only proxy, with a *hosted* policy classifying each CONNECT alongside:
+
+| Host | Hosted verdict |
+| --- | --- |
+| `api.anthropic.com` | intercept |
+| `mcp-proxy.anthropic.com` | refuse (`not_allowed`) |
+| `mcp.notion.com` | refuse (`not_allowed`) |
+
+A third run with the composed list **enforced** completed normally and refused exactly one
+destination:
+
+```
+[TeamClaude] refused CONNECT mcp.notion.com:443 — mcp.notion.com is not on the allowlist
+```
+
+**That refusal is the finding.** `mcp.notion.com` comes from the machine's own `.mcp.json`.
+A user's MCP servers are host names no release can know, which is the concrete reason
+FR-07.3 requires the allowlist to be data. Neither the telemetry hosts nor
+`downloads.claude.ai` appeared in these windows; the latter ships allowed regardless,
+because refusing it breaks self-update and collides with the version floor in
+[#16](../../../issues/16).

@@ -5,6 +5,7 @@ import { createWriteStream, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
+import { createDestinationPolicy, connectPolicyDefaults, pinnedLookup } from './destination-policy.js';
 import { patchAccountUuid } from './account-uuid-rewrite.js';
 import { sanitizeToolPairs } from './tool-pair-sanitize.js';
 import { parseRequestModel, parseAdvisorModel } from './account-manager.js';
@@ -98,6 +99,19 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   const logDir = config.logDir || null;
   const holdMs = (config.holdSeconds || 0) * 1000;
 
+  // NFR-20.1 — a missing key must not mean "allow everything". The auth gates
+  // both start `if (!proxyApiKey) return true`, which is right for a loopback
+  // listener and is an open proxy anywhere else. createDefaultConfig() writes a
+  // key on first run, so this is only reachable by hand-editing — and it fails
+  // open, which is the combination worth refusing to start on rather than
+  // logging about.
+  if (!connectPolicyDefaults(config).local && !proxyApiKey) {
+    throw new Error(
+      `proxy.host is ${config.proxy?.host} — not loopback — and proxy.apiKey is not set. ` +
+      'Without it every client is authorised, including anything that can reach the port. ' +
+      'Set proxy.apiKey, or bind proxy.host to 127.0.0.1.');
+  }
+
   if (logDir) {
     mkdir(logDir, { recursive: true }).catch(() => {});
   }
@@ -120,7 +134,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
       // proxying plain HTTP to some host. Account logic is only for hosts we
       // manage (the Anthropic upstream, which is HTTPS-only and never arrives
       // this way); forward anything else transparently instead of hijacking it.
-      if (/^https?:\/\//i.test(req.url || '')) { relayHttpForward(req, res); return; }
+      if (/^https?:\/\//i.test(req.url || '')) { await relayHttpForward(req, res, destinations); return; }
 
       // Status endpoint
       if (req.method === 'GET' && req.url === '/teamclaude/status') {
@@ -160,6 +174,10 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   // Opt-in egress pin: null unless config.egress.pin is set, and then shared by
   // the base listener and the MITM one so both honour the same hold.
   const egress = createEgressGuard(config, console.error);
+  // Where this proxy may connect (#8). Shared by both egress paths — the CONNECT
+  // tunnel and the plain-HTTP forward — so a destination refused on one cannot
+  // be reached through the other.
+  const destinations = createDestinationPolicy(config, { log: console.error });
   const forward = createProxyRequestListener({ accountManager, upstream, logDir, hooks, sx, holdMs, config, egress });
   // An https.Server still emits 'connect' and 'upgrade' — it is an http.Server
   // whose transport happens to be TLS — so the CONNECT/MITM and WebSocket paths
@@ -198,7 +216,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
     const c = await certsInFlight;
     return { key: c.leafKeyPem, cert: c.leafCertPem };
   };
-  server.on('connect', createConnectHandler({ config, accountManager, ensureLeaf, logDir, hooks, log: console.error, sx, egress }));
+  server.on('connect', createConnectHandler({ config, accountManager, ensureLeaf, logDir, hooks, log: console.error, sx, egress, policy: destinations }));
   // Remote Control's real-time channel is a WebSocket, not a request/response
   // call — Node fires 'upgrade' for that handshake, never 'request', so it
   // needs its own listener (base-URL routing path; the MITM path wires the
@@ -259,12 +277,52 @@ export function resolveAccountPin(accountManager, token) {
 // client's own headers — no account selection, no token injection,
 // content-encoding passed through (a transparent forward proxy). Anthropic is
 // HTTPS-only, so in practice this only ever sees third-party hosts.
-export function relayHttpForward(req, res) {
+// A refusal reason, as the error envelope names it. The three are one-to-one
+// with what the destination policy can return; a fourth would reach a client as
+// something the contract does not describe.
+const REFUSAL_TYPE = {
+  not_allowed: 'destination_not_allowed',
+  address_blocked: 'destination_address_blocked',
+  port_not_allowed: 'destination_port_not_allowed',
+};
+
+export async function relayHttpForward(req, res, policy = null) {
   let target;
   try { target = new URL(req.url); } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Malformed forward-proxy URL' } }));
     return;
+  }
+
+  let dialLookup = null;
+
+  // NFR-21.4 — the second egress path. The issue as filed named only the
+  // CONNECT tunnel; this one parses an absolute URL and forwarded it with no
+  // host or port restriction either, so closing one without the other closes
+  // nothing.
+  if (policy) {
+    const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
+    const verdict = await policy.classify(target.hostname, port, { ports: [80, 443] });
+    if (verdict.action === 'refuse') {
+      // 400, not 403, and measured: a 403 carrying this envelope made the client
+      // print "Failed to authenticate." before the message, and a 502 was
+      // retried for a destination that will never be allowed. 400 printed the
+      // message cleanly, and is what a blocked model already returns.
+      console.error(`[TeamClaude] refused forward to ${target.host} — ${verdict.detail}`);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: REFUSAL_TYPE[verdict.reason], message: `teamclaude refused this destination: ${verdict.detail}` },
+      }));
+      return;
+    }
+    // NFR-21.2 — dial the address that was checked, without rewriting the URL.
+    // `host` is hop-by-hop here, so Node derives both the Host header and the
+    // TLS servername from the target: replacing the hostname with an address
+    // would reach a virtual host as an IP it has never heard of. Pinning
+    // `lookup` instead sends the socket to the approved address while the name
+    // still travels, and guarantees there is no second resolution to differ.
+    if (verdict.action === 'tunnel') dialLookup = pinnedLookup(verdict.addresses);
   }
   const transport = target.protocol === 'http:' ? http : https;
   const headers = {};
@@ -275,7 +333,9 @@ export function relayHttpForward(req, res) {
     headers[key] = value;
   }
 
-  const upstreamReq = transport.request(target, { method: req.method, headers }, (upstreamRes) => {
+  const options = { method: req.method, headers };
+  if (dialLookup) options.lookup = dialLookup;
+  const upstreamReq = transport.request(target, options, (upstreamRes) => {
     const responseHeaders = {};
     for (const [key, value] of Object.entries(upstreamRes.headers)) {
       if (CONNECTION_SPECIFIC_HEADERS.has(key)) continue;
