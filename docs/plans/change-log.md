@@ -153,3 +153,33 @@ retried; `400` → the message, clean.
 **Exhaustion is not claimed.** §9's appendix records what the sweep can and cannot
 establish. Six of these were found by measuring rather than reading, and a text sweep
 cannot find an assumption nobody wrote a sentence about.
+
+---
+
+## Reverse index — what shaped each artifact
+
+Forward tracing answers "did this finding reach everywhere it should". It cannot answer
+"why does this file say what it says", which is the question someone asks when they open it
+cold. ISO 21500 wants both directions.
+
+| Artifact | Shaped by |
+| --- | --- |
+| `docs/saas-requirements.md` §4.1 FR | FR-16.3 ← ASM-27 · FR-18 ← ASM-13, F16 |
+| §4.2 NFR | NFR-17.5 ← ASM-15 · NFR-21.5 ← ASM-20 · NFR-21.6 ← ASM-19 · NFR-20/21 ← the SSRF read of `mitm.js` · NFR-22 ← ASM-10 · NFR-23 ← G-1 audit · NFR-24 ← ASM-36 · NFR-25 ← no threat model · NFR-26/27 ← ISO 29119 audit |
+| §4.3 ASM | 43 entries; 14 measured here, 8 read from source, 4 deferred to vendor documentation |
+| §4.4 CON | CON-09 narrowed ← `mitm.js:204` logs the destination · CON-01/04 reclassified deferred ← ASM-35, ASM-36 |
+| §7 Data protection | Two rows marked *not today* ← ASM-37 (buffers held across retries), ASM-38 (crash stacks) |
+| §9 Asset inventory | Exists at all ← ISO 27001 F-1 and ISO 42010 H-1 reaching the same gap · crash log row ← ASM-24 · quota state reclassified ← ASM-26 · retention marked a target ← ASM-25 |
+| §10 Risk register | Exists at all ← ISO 31000 B-1/B-2/B-3 · RSK-03 widened ← ASM-40 · RSK-03 residual ← ASM-15 · RSK-04 treated ← [#30](../../issues/30) |
+| §6 M1 exit criteria | G-1 reworded ← ASM-33 · G-3 reworded ← ASM-31 |
+| `specs/m1-certificates.md` | NFR-17.5 ← ASM-15 · lifetime derived not chosen ← ASM-16, ASM-17 |
+| `specs/m1-enrolment.md` | FR-03.3 comments ← ASM-18 · FR-16.3 ← ASM-27 · both-locations rule ← F14–F17 |
+| `specs/m1-hardening.md` | FR-07.4 split ← ASM-23, ASM-43 · NFR-21.5 ← ASM-20 · NFR-21.6 ← ASM-19 · exact hostnames ← ASM-21 |
+| `specs/m1-failure-modes.md` | FR-17.1 message-carries-everything ← ASM-29 · NFR-13.2 partial unenrol ← ASM-28 |
+| `contracts/m1-error-envelope.md` | 400 on the request path ← ASM-23, ASM-43 · type is operator-facing ← ASM-29 |
+| `contracts/m1-internal-seams.md` | S1 connect-by-address ← `mitm.js:197` · S2 log-only id on CONNECT ← the envelope split · S3 boundary ← `claude-env.js:14`, `alias.js:79` |
+| `plans/m1-plan.json` governance | NFR-17.5 approval ← ASM-15 · lifetimes removed ← ASM-16 · M4 inputs ← ASM-40, [#30](../../issues/30) |
+| `test/requirements-coverage.test.js` | Each of the nine checks exists because that failure happened once — the comments name which |
+
+**Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,
+which is how the first register was built and why the audit found eleven gaps in it.

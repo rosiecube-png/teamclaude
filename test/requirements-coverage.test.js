@@ -142,6 +142,67 @@ test('the two contracts agree about refusals', () => {
     'since the envelope gives that path no body');
 });
 
+// The plan was re-validated by hand after each change and reported as passing.
+// Reporting is not enforcing: the next change to project_controls, or to a
+// task's scope, would be checked only if someone remembered to.
+test('the plan is internally consistent', () => {
+  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
+  const ids = new Set(plan.tasks.map((t) => t.id));
+
+  for (const t of plan.tasks) {
+    for (const d of t.dependencies) {
+      assert.ok(ids.has(d), t.id + ' depends on unknown ' + d);
+      const dep = plan.tasks.find((x) => x.id === d);
+      assert.ok(dep.priority < t.priority,
+        t.id + ' (tier ' + t.priority + ') depends on ' + d + ' (tier ' + dep.priority + ')');
+    }
+    assert.ok(t.acceptance_criteria.length > 0, t.id + ' has no acceptance criteria');
+    assert.ok(['tdd', 'test_after', 'not_applicable'].includes(t.test_approach),
+      t.id + ' has an invalid test_approach');
+    if (t.test_approach === 'not_applicable') {
+      assert.ok(t.test_approach_rationale && t.alternative_verification,
+        t.id + ' is not_applicable without a rationale and an alternative verification');
+    }
+  }
+
+  // two agents editing one file in parallel is what scope exists to prevent
+  const byTier = {};
+  for (const t of plan.tasks) (byTier[t.priority] ||= []).push(t);
+  for (const [tier, ts] of Object.entries(byTier)) {
+    for (let i = 0; i < ts.length; i++) {
+      for (let j = i + 1; j < ts.length; j++) {
+        const overlap = ts[i].scope.filter((a) => ts[j].scope.some((b) => a.startsWith(b) || b.startsWith(a)));
+        assert.deepEqual(overlap, [],
+          'tier ' + tier + ': ' + ts[i].id + ' and ' + ts[j].id + ' both own ' + overlap.join(', '));
+      }
+    }
+  }
+});
+
+// The board is generated from the plan, so it goes stale silently the moment a
+// criterion is added and nobody regenerates it.
+test('the task board matches the plan it came from', () => {
+  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
+  const board = readFileSync('docs/plans/task-board.md', 'utf8');
+  const missing = [];
+  for (const t of plan.tasks) {
+    for (const c of t.acceptance_criteria) if (!board.includes(c)) missing.push(t.id + ': ' + c.slice(0, 60));
+  }
+  assert.deepEqual(missing, [],
+    'the board is stale — regenerate it from the plan:\n  ' + missing.join('\n  '));
+});
+
+// Forward tracing says a finding reached everywhere. It cannot say why a file
+// says what it says, which is the question someone asks opening it cold.
+test('the change trace runs in both directions', () => {
+  const trace = readFileSync('docs/plans/change-log.md', 'utf8');
+  assert.ok(/Reverse index/.test(trace), 'the change trace has no reverse index');
+  for (const artifact of ['m1-error-envelope.md', 'm1-internal-seams.md', 'm1-plan.json',
+    'requirements-coverage.test.js']) {
+    assert.ok(trace.includes(artifact), 'the reverse index does not account for ' + artifact);
+  }
+});
+
 test('the M1 plan is validated against the register it ships with', () => {
   const planPath = 'docs/plans/m1-plan.json';
   assert.ok(existsSync(planPath), 'the durable M1 plan is missing');
