@@ -218,9 +218,25 @@ missing between a change and the branch:
 
 | | Was | Now |
 | --- | --- | --- |
-| Direct push to `master` | Allowed — CI could be skipped entirely | Branch protection requires the checks |
+| Direct push to `master` | Allowed — CI could be skipped entirely | Refused by the remote, measured below |
 | A governing artifact changing untraced | Nothing asked | `scripts/check-change-trace.mjs` fails the PR |
 | Which omissions are caught | Only shapes already seen | Still only those — see below |
+
+**What protection enforces**, read back from the API rather than from the request that set
+it: required checks `test`, `change trace`, `nix package`; force-push and deletion off;
+`enforce_admins` **on**. That last one is the difference between a gate and a suggestion —
+with it off the sole repository admin is also the only person who commits here, so every
+push would have bypassed the checks and the row above would have been false.
+
+It was tested by pushing this commit straight at `master` and reading the refusal:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/master.
+ ! [remote rejected] HEAD -> master (protected branch hook declined)
+```
+
+The same commit then went through a pull request. A protection setting that has never
+refused anything is a claim about a configuration page, not about the branch.
 
 The trace gate is the only one that guards a **class** rather than an instance. It does not
 know what a change should have touched; it requires that somebody said. That is weaker than
