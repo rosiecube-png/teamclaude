@@ -470,6 +470,7 @@ control plane.
 
 | | Requirement | Tracked | Spec |
 | --- | --- | --- | --- |
+| Decide the internal seams the M1 tasks share, before implementing against them | — | [#31](../../issues/31) | [seams](plans/contracts/m1-internal-seams.md) |
 | Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16, FR-18 | [#19](../../issues/19) | [enrolment](specs/m1-enrolment.md) |
 | CONNECT destination allowlist, address policy, and a listener that fails closed | FR-07, NFR-20, NFR-21 | [#8](../../issues/8) | [hardening](specs/m1-hardening.md) |
 | Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) | [failure modes](specs/m1-failure-modes.md) |

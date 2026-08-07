@@ -1,0 +1,169 @@
+# Task Board
+## Session: session-20260807-105350
+
+### task-0
+- **Agent**: architecture
+- **CLI**: claude
+- **Title**: Decide the three internal seams M1 tasks share
+- **Status**: pending
+- **Priority**: 1
+- **Dependencies**: none
+- **Exposed Skills**: oma-architecture
+- **Exposure Fallback**: false
+- **Scope**: docs/plans/contracts/
+- **Test Approach**: not_applicable
+- **Description**: S1 destination resolution and policy (task-3), S2 request correlation (task-4, task-5), S3 enrolment module boundary (task-2). Each is shared by more than one task, so deciding them inside a task means the next task builds a second shape. This is the discipline already applied to the error envelope, turned inward. Each decision follows a pattern the codebase uses rather than introducing one: createEgressGuard for an injected policy collaborator, the existing ctx for request state, alias.js writing while claude-env.js stays pure.
+- **Acceptance Criteria**:
+  - S1 — a destination policy collaborator with a classify(host, port) returning intercept, tunnel with the resolved address, or refuse with a reason that maps onto the error envelope; the lookup is injectable so a test can force a private address and answer differently on a second call
+  - S2 — a correlation id generator, where it is created on the request path and on the CONNECT path, and how it reaches both the log line and the response message without changing the error envelope shape
+  - S3 — enrolment owns the filesystem in a new module while claude-env.js stays pure; the settings merge is a separate pure function so FR-03.3 and FR-03.4 are testable without a filesystem; every path is a parameter with a default
+  - Each decision cites the existing pattern it follows, with a file and line
+  - What is deliberately not decided is listed with the task that owns it
+
+### task-1
+- **Agent**: backend
+- **CLI**: claude
+- **Title**: Renew MITM certificates on age, not only on host mismatch
+- **Status**: pending
+- **Priority**: 2
+- **Dependencies**: task-0
+- **Exposed Skills**: oma-backend
+- **Exposure Fallback**: false
+- **Scope**: src/mitm.js, src/x509.js, test/cert-lifetime.test.js, docs/configuration.md
+- **Test Approach**: tdd (unit)
+- **Description**: leafCovers() (src/mitm.js:54) checks the CA signature and the SANs and never reads the validity dates, so an expired leaf is reused rather than replaced and every intercepted TLS connection fails with no self-healing. Lifetimes at issuance are CA 3650 days (src/x509.js:141) and leaf 825 days (:151). Implement docs/specs/m1-certificates.md.
+- **Acceptance Criteria**:
+  - NFR-17.1 — leafCovers rejects an expired leaf, and one whose remaining life is below the renewal threshold
+  - NFR-17.2 — the same check applies to the CA certificate; a fresh leaf signed by an expired CA is replaced
+  - NFR-17.3 — regeneration logs the reason: expired, near expiry, or host mismatch
+  - NFR-17.4 — leafDays and renewBeforeDays are configurable under proxy.certs, with defaults shorter than today's 825
+  - A leaf inside the window that covers the hosts is still reused — no needless churn
+  - docs/configuration.md documents proxy.certs
+
+### task-2
+- **Agent**: backend
+- **CLI**: claude
+- **Title**: Client enrolment writes both configuration locations
+- **Status**: pending
+- **Priority**: 2
+- **Dependencies**: task-0
+- **Exposed Skills**: oma-backend
+- **Exposure Fallback**: false
+- **Scope**: src/enrol.js, src/claude-env.js, test/enrol.test.js
+- **Test Approach**: tdd (unit)
+- **Description**: Nothing in src/ reads or writes ~/.claude/settings.json today; buildClaudeEnvLines (src/claude-env.js:33) emits shell exports only. Measured (F14-F17): shell env covers the pre-settings window, user-scope settings.json covers everything after including background agents, and project scope silently bypasses the proxy for background agents. Both are required. Implement docs/specs/m1-enrolment.md.
+- **Acceptance Criteria**:
+  - FR-03.1 — writes to user-scope ~/.claude/settings.json; project scope is never used
+  - FR-03.2 — also emits the shell export covering the pre-settings window
+  - FR-03.3 — merges into an existing env block and preserves every unrelated key; the file is not rewritten wholesale
+  - FR-03.4 — running enrolment twice produces byte-identical output
+  - FR-03.5 — unenrol removes exactly what was added and leaves the machine reaching the upstream directly
+  - FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only
+  - Tests use a fixture settings file carrying unrelated keys, not an empty object
+
+### task-3
+- **Agent**: backend
+- **CLI**: claude
+- **Title**: CONNECT and forward policy: allowlist, address policy, fail-closed listener
+- **Status**: pending
+- **Priority**: 3
+- **Dependencies**: task-1
+- **Exposed Skills**: oma-backend
+- **Exposure Fallback**: false
+- **Scope**: src/mitm.js, src/server.js, src/index.js, test/connect-policy.test.js, docs/configuration.md
+- **Test Approach**: tdd (unit, integration)
+- **Description**: The tunnel branch dials any host on any port with no filtering (src/mitm.js:175, :197), and relayHttpForward (src/server.js:247) is a second unrestricted path. connectAuthorized returns true when no proxy.apiKey is set (src/mitm.js:294), failing open. Implement docs/specs/m1-hardening.md. Emit refusals against docs/plans/contracts/m1-error-envelope.md.
+- **Acceptance Criteria**:
+  - FR-07.1 — every destination is classified intercept, tunnel or refuse, defaulting to refuse
+  - FR-07.2 — intercept applies only to the configured upstream host
+  - FR-07.3 — tunnel applies only to an allowlist held as configuration data
+  - FR-07.4 — a refusal answers 403 naming the host and opens no socket to it
+  - FR-07.5 — the shipped allowlist is composed by running a client with it active; each entry records why it is there; what was refused during that run is recorded in the PR
+  - FR-07.6 — the www.example.org intercept is removable, and off by default when proxy.host is not loopback
+  - NFR-20.1 — a non-loopback proxy.host with no proxy.apiKey fails at startup naming the missing setting
+  - NFR-20.2 — the loopback auth exemption is disableable, and off by default when proxy.host is not loopback
+  - NFR-21.1 — a destination resolving to loopback, link-local or private is refused even when allowlisted
+  - NFR-21.2 — the connection is made to the address that was checked, not to the name
+  - NFR-21.3 — tunnelled destinations are restricted to port 443
+  - NFR-21.4 — relayHttpForward enforces the same host and address policy
+  - With proxy.host on loopback every current behaviour is unchanged
+  - No runtime dependency is added; address classification uses node:net and node:dns
+  - NFR-26 — the address tests exercise boundaries, not one member per class: the edges of 127.0.0.0/8, 169.254.169.254 itself, the 172.16-172.31 limits, and IPv4-mapped IPv6 forms
+  - NFR-07 — an SSE response survives the new path; no idle timeout is introduced below the client watchdogs
+  - NFR-06 — resolution does not add a DNS lookup per request; results are reused for the life of a tunnel at minimum, and the measured headroom (F07, F08) is not spent
+
+### task-4
+- **Agent**: backend
+- **CLI**: claude
+- **Title**: Distinguish proxy-originated failures and document the way back
+- **Status**: pending
+- **Priority**: 4
+- **Dependencies**: task-3
+- **Exposed Skills**: oma-backend
+- **Exposure Fallback**: false
+- **Scope**: src/server.js, test/failure-modes.test.js, docs/usage.md
+- **Test Approach**: tdd (unit)
+- **Description**: Three separate transport failures all report proxy_error / 'Upstream unreachable' (src/server.js:276, :551, :659) and a fourth reports 'Internal proxy error' (:489). Tolerable when the operator is the user; not once the proxy is elsewhere. The existing 403 handler (:745) is the model to extend. Implement docs/specs/m1-failure-modes.md against the error-envelope contract.
+- **Acceptance Criteria**:
+  - FR-17.1 — each failure class produces a distinct error.type per the contract
+  - FR-17.2 — an actionable failure names the concrete step, following the shape of src/server.js:745
+  - FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request
+  - NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly
+  - Existing 403, 429 and pin tests still pass unchanged
+
+### task-5
+- **Agent**: backend
+- **CLI**: claude
+- **Title**: Detect a partially configured client
+- **Status**: pending
+- **Priority**: 5
+- **Dependencies**: task-2, task-3, task-4
+- **Exposed Skills**: oma-backend
+- **Exposure Fallback**: false
+- **Scope**: src/server.js, test/partial-config.test.js
+- **Test Approach**: tdd (unit)
+- **Description**: FR-18.1. ASM-13 records that nothing detects a half-configured machine: if one of the two configuration locations is lost, traffic leaks silently and everything appears to work. The detectable half uses a signal already on the wire — the pre-settings request arrives only when the shell export is present, so a session whose first contact is the post-settings burst was configured by settings.json alone.
+- **Acceptance Criteria**:
+  - FR-18.1 — a session that first appears after settings load is reported as partially configured, naming the missing location
+  - The report is visible without reading logs — activity stream or status endpoint
+  - The inverse case (settings missing, shell present) is documented as not detectable proxy-side, with the reason
+  - No false positive for a correctly enrolled client
+
+### task-6
+- **Agent**: qa
+- **CLI**: claude
+- **Title**: Security review of the M1 boundary
+- **Status**: pending
+- **Priority**: 6
+- **Dependencies**: task-3, task-4, task-5
+- **Exposed Skills**: oma-qa
+- **Exposure Fallback**: false
+- **Scope**: (read-only)
+- **Test Approach**: not_applicable
+- **Description**: Adversarial review of what M1 changed, against the threat that motivated it: an authenticated tenant using the operator's network position. Not a general audit — the boundary is the destination policy, the authorisation gate, and the certificate lifecycle.
+- **Acceptance Criteria**:
+  - Attempts SSRF by name, by literal address, by redirect, and by a name that changes between resolution and connect; each is refused
+  - Confirms no configuration reachable by omission leaves the listener open off-box
+  - Confirms refusal messages leak nothing about the operator's internal network
+  - Confirms the loopback path is unchanged for existing local users
+  - Findings recorded with severity and a reproduction
+  - NFR-27 — each finding carries a severity, becomes a failing test in the task that owns the behaviour, and no high finding is left open
+
+### task-7
+- **Agent**: docs
+- **CLI**: claude
+- **Title**: Bring the documentation in line with what M1 shipped
+- **Status**: pending
+- **Priority**: 6
+- **Dependencies**: task-1, task-2, task-3, task-4, task-5
+- **Exposed Skills**: oma-docs
+- **Exposure Fallback**: false
+- **Scope**: docs/
+- **Test Approach**: not_applicable
+- **Description**: M1 changes the configuration surface, the failure messages, and how a client is set up. docs/configuration.md, docs/proxy-modes.md and docs/usage.md all describe the current behaviour and will be wrong in places.
+- **Acceptance Criteria**:
+  - proxy.connect and proxy.certs documented in docs/configuration.md alongside the existing keys
+  - docs/proxy-modes.md no longer claims arbitrary hosts are blind-tunnelled
+  - Enrolment and unenrol documented, with unenrol named as the recovery step when the service is unreachable
+  - docs/specs/ requirement IDs still resolve to what was built; any divergence is corrected in the spec, not silently in the code
+  - No documentation references a file, flag or config key that does not exist
