@@ -9,15 +9,72 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Requirements | 12 functional, 11 non-functional — §4.1, §4.2 |
-| Assumptions | 10 — 6 verified, 3 unverified, 1 known false — §4.3 |
-| Constraints | 6 — §4.4 |
+| Requirements | 17 functional, 19 non-functional — §4.1, §4.2 |
+| Assumptions | 13 — 6 verified, 6 unverified, 1 known false — §4.3 |
+| Constraints | 10 — §4.4 |
 | Measured findings | 18 — §2 |
 | Backlog | 1 — egress IP, §5 |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
 | Pull requests | [#1](../../pull/1), [#2](../../pull/2), [#10](../../pull/10) |
 
 ---
+
+## 0. Purpose and goals
+
+### Purpose
+
+Let one person use **their own** Claude accounts from **their own** machines without
+installing and maintaining a proxy on each one. The local proxy already pools accounts;
+this moves that pooling somewhere central so several machines share it.
+
+### Non-goals
+
+Stated so requirements are not written for them.
+
+- **No billing.** The service is not sold. Funding, if any, is donations.
+- **No schedule.** It ships when it is finished; no dates are estimated, so nothing here is
+  scoped down to hit one.
+- **Not a way to get more quota than the accounts hold.** The product redistributes what
+  the accounts already have — see CON-07.
+
+### Two deployment modes
+
+These have very different obligations, and several requirements apply to only one. Which
+one is being built is **not yet decided**, and the answer changes what must be done before
+anything can be run for other people.
+
+| | **Self-hosted** | **Community-hosted** |
+| --- | --- | --- |
+| Who operates it | The account owner | A volunteer, for others |
+| Whose credentials it holds | The operator's own | Other people's |
+| Multi-tenancy | Optional | Required |
+| Per-tenant CA, KMS, audit logging | Optional | Required |
+| Privacy policy, DPA, incident process | Not applicable | Required |
+| Credential-custody grey area (CON-06) | **Does not arise** | Applies |
+| Funding for dedicated egress, KMS, on-call | Operator's own machine | **Donations only** |
+
+Self-hosted is the lower-risk path and is close to what exists today: the local proxy
+already supports off-box operation (F13). Community-hosted adds the entire control plane,
+the security boundary, and legal exposure — funded by donations.
+
+That funding gap is a real constraint, not a footnote (CON-08). Several requirements here
+— per-tenant egress IPs (NFR-08), KMS-held CA keys (NFR-03), incident response (NFR-15) —
+carry ongoing cost with no revenue against them.
+
+### Success criteria
+
+What "finished" means. Each is checkable.
+
+| | Criterion |
+| --- | --- |
+| **G-1** | A machine is enrolled and `claude` works with **no resident process** on it |
+| **G-2** | Every request that spends quota is attributed to the account that served it |
+| **G-3** | No request is ever served with an account belonging to a different person |
+| **G-4** | A device can be revoked without disturbing that person's other devices |
+| **G-5** | Pooling *N* accounts yields materially more headroom than one — the premise (ASM-09 is the open risk) |
+| **G-6** | When the service is unreachable, the failure is legible and recovery does not need the operator |
+
+G-6 is the one with no requirement behind it today; see NFR-12 and NFR-13.
 
 ## 1. Scope
 
@@ -136,7 +193,12 @@ says which of these already exist in the codebase.
 | **FR-09** | Detect an invalidated token, notify the user, and offer re-authentication from the dashboard | [#7](../../issues/7) |
 | **FR-10** | Refuse clients below a published minimum version, naming the version and how to update | §8.4 |
 | **FR-11** | Dashboard: accounts, devices, quota, per-tenant status | — |
-| **FR-12** | Meter usage per tenant for billing | `updateUsage`, SSE parsing |
+| **FR-12** | Show each person their own usage and remaining quota — for visibility, not billing (§0 non-goals) | `updateUsage`, SSE parsing |
+| **FR-13** | Authenticate to the dashboard. It is the gate in front of every stored credential | — |
+| **FR-14** | Offboard: revoke every device, delete stored tokens, and confirm the deletion | G-4 |
+| **FR-15** | Remove or disable one account without disturbing the person's others | `disable`/`remove` |
+| **FR-16** | Distribute the enrolment artifacts (script, CA, device certificate) over an authenticated channel | FR-02 |
+| **FR-17** | Surface why a request failed — exhausted, refused, unreachable — so recovery does not need the operator | G-6 |
 
 ### 4.2 Non-functional — NFR
 
@@ -153,6 +215,14 @@ says which of these already exist in the codebase.
 | **NFR-09** | Horizontal scaling without double-counting quota — tenant-sticky routing or externalised state | [#4](../../issues/4) |
 | **NFR-10** | Canary each new client release before adopting it as the floor | §8.4, F03, F06 |
 | **NFR-11** | Audit every access to stored credentials | §7 |
+| **NFR-12** | State an availability posture and hold to it. Best-effort is a legitimate answer for a donation-funded service — silence is not | G-6, CON-08 |
+| **NFR-13** | Degrade legibly: when the service is unreachable the client must fail with a diagnosable error, and removing the proxy configuration must restore direct operation | G-6 |
+| **NFR-14** | Back up tenant configuration and tokens, and rehearse the restore. Losing them means every user re-enrols every account by hand | — |
+| **NFR-15** | Have an incident process before holding anyone else's credentials: detection, containment, and notifying the people affected | CON-02, community-hosted only |
+| **NFR-16** | Fair-share across tenants. `stormRamp` paces a single **account**; nothing paces a **tenant**, so one can crowd out the rest of a shared egress | `stormRamp` |
+| **NFR-17** | Rotate the secrets the design creates — proxy keys, device certificates, the tenant CA — with a defined lifetime and a revocation path | NFR-03 |
+| **NFR-18** | Declare where tokens and logs are stored, and keep them there | §7, community-hosted only |
+| **NFR-19** | Protect the dashboard itself: session handling, and rate limiting on enrolment and login | FR-13 |
 
 ### 4.3 Assumptions — ASM
 
@@ -170,6 +240,9 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-08** | Interactive mode produces the same request pattern as `-p` | ❌ **unverified** — §8.5 |
 | **ASM-09** | A datacenter egress IP is treated like any other | ❌ **unverified** — §5, backlog by decision |
 | **ASM-10** | Client behaviour is stable across releases | ❌ **false** — F03 and F06 both found it moving. NFR-10 exists because of this |
+| **ASM-11** | The upstream's response contract is stable | ❌ **unverified** — quota tracking parses `anthropic-ratelimit-unified-*`. If those headers change, rotation degrades **silently**. The server-side twin of ASM-10, and nothing watches for it |
+| **ASM-12** | Headless token refresh keeps working without user interaction | ❌ **unverified** — re-login prompts are already reported in ordinary use |
+| **ASM-13** | Enrolment leaves both configuration locations in place | ❌ **unverified** — FR-03 needs both; if one is lost the leak is silent (F16). Nothing detects the half-configured state |
 
 ### 4.4 Constraints — CON
 
@@ -182,7 +255,11 @@ Fixed properties of the design or its environment. Not problems to solve — bou
 | **CON-03** | One request fires before `settings.json` is read | Only the shell `export` covers it — hence FR-03 requiring both |
 | **CON-04** | Cloud sessions ignore `NODE_EXTRA_CA_CERTS` and the client-certificate variables | Claude Code on the web cannot be routed through the service; support the local CLI only |
 | **CON-05** | Issuing leaves server-side requires persisting a CA private key | A regression against the local design, which discards it. Bounded by NFR-03 |
-| **CON-06** | Users upload their own refresh tokens to a third party | A grey area under the consumer terms. Mitigate with a self-hostable build, explicit consent and NFR-11; needs legal review |
+| **CON-06** | Users upload their own refresh tokens to a third party | A grey area under the consumer terms. **Does not arise when self-hosted.** Otherwise mitigate with explicit consent and NFR-11; needs legal review |
+| **CON-07** | The quota belongs to the accounts, not to the service | The product redistributes; it cannot create headroom. Everything rests on rotation clearing a limit (G-5, ASM-09) |
+| **CON-08** | No revenue | NFR-03, NFR-08 and NFR-15 all carry ongoing cost against donations. Either the community-hosted mode is scoped to what a volunteer can carry, or it is not offered |
+| **CON-09** | Blind-tunnelled traffic is opaque by design | It cannot be audited or attributed. Whatever FR-07 admits to the allowlist is outside every other guarantee here |
+| **CON-10** | The client is not ours | Its behaviour can change under the service at any time (ASM-10), and there is no way to pin what users run beyond refusing old versions (FR-10) |
 
 ### 4.5 Gap analysis
 
@@ -225,7 +302,7 @@ Which of the above already exist in the codebase.
 | Multi-tenancy | there is no tenant concept in the code at all | [#4](../../issues/4) |
 | Hosted OAuth enrollment | the current flow is localhost-callback only | [#7](../../issues/7) |
 | Token-invalidation detection and re-auth | locally one `login`; hosted it is a dashboard round trip | [#7](../../issues/7) |
-| Signup, billing, dashboard | the whole control plane | — |
+| Signup, dashboard, offboarding | the whole control plane. No billing — §0 non-goals | [#7](../../issues/7) |
 
 ---
 
@@ -275,8 +352,15 @@ the next one's design.
 | **P0** | TLS listener and rotation scope. Both fix defects in the current product independently of any hosting plan. | [#1](../../pull/1), [#2](../../pull/2) — merged |
 | **P1** | Dismantle single-tenancy: config store to a database, per-tenant `AccountManager`, distributed locking. Most later work is blocked on this. | [#4](../../issues/4) |
 | **P2** | Security boundary: per-tenant CA and key custody, mTLS device auth, hosted hardening. | [#5](../../issues/5), [#6](../../issues/6), [#8](../../issues/8) — security review |
-| **P3** | Control plane: signup, OAuth enrollment, re-auth flow, dashboard, billing, per-tenant observability. | [#7](../../issues/7) |
+| **P3** | Control plane: signup, OAuth enrolment, re-auth flow, dashboard, offboarding, per-tenant visibility. | [#7](../../issues/7) |
 | **P4** | Rewrite the compliance documentation. | release gate — legal review advised |
+
+**P1–P4 are the community-hosted path.** Self-hosted needs far less: the local proxy
+already binds off-box with an authenticated listener (F13, [#1](../../pull/1)), so it
+needs the client-enrolment work (FR-02, FR-03, FR-16) and the hardening in
+[#8](../../issues/8) — not multi-tenancy, not a KMS, not a control plane, and none of the
+legal work in P4. Deciding the mode (§0) therefore decides most of the remaining scope,
+and it is the largest open question left in this document.
 
 [§8](#8-to-settle-before-building) tracks what was settled before P1 and the two client
 coverage gaps that remain open. Neither blocks P1.
