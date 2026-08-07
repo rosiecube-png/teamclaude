@@ -1,0 +1,398 @@
+{
+  "project_name": "teamclaude — M1 (self-hostable)",
+  "description": "Implement milestone M1 of the hosted-service work: make the proxy safe and legible to run on a host you own and reach from your own machines. Scope is fixed by four specs under docs/specs/, each decomposing register entries from docs/saas-requirements.md into numbered, testable sub-requirements.",
+  "session_id": "20260807-105350",
+  "created": "2026-08-07",
+  "tech_stack": {
+    "frontend": "n/a — no UI in M1; the dashboard is M3",
+    "backend": "Node.js >= 20, ESM, built-ins only",
+    "mobile": "n/a",
+    "database": "n/a — config is a JSON file until M2 (#4)",
+    "infrastructure": "n/a for M1; the operator runs one process on their own host"
+  },
+  "architecture_decisions": [
+    {
+      "decision": "No runtime dependencies may be added",
+      "rationale": "package.json declares dependencies:{} and the README states 'No dependencies. Node built-ins only.' (README:39). This is a product property, not an accident. Practically it means NFR-21.1's address classification is hand-written against node:net (isIP/isIPv4/isIPv6) rather than pulled from a library, and resolution uses node:dns promises lookup with all:true.",
+      "alternatives_considered": [
+        "Add an IP-range library",
+        "Vendor a minimal range checker"
+      ]
+    },
+    {
+      "decision": "Defaults derive from proxy.host rather than being independent switches",
+      "rationale": "Bound to loopback the proxy keeps today's behaviour exactly, so existing local users see no change. Bound anywhere else every hardening switch defaults closed. An operator cannot reach the unsafe combination by omission, only deliberately. Applies to NFR-20.1, NFR-20.2 and FR-07.6.",
+      "alternatives_considered": [
+        "Independent booleans defaulting closed everywhere (breaks local users)",
+        "Independent booleans defaulting open (fails open off-box)"
+      ]
+    },
+    {
+      "decision": "Address policy checks the resolved address and connects to it, not to the name",
+      "rationale": "net.connect(port, host) (src/mitm.js:197) takes a hostname and resolves it itself, so resolve-check-connect-by-name resolves twice and a name can answer differently each time. Without NFR-21.2 the NFR-21.1 check is decorative. Blind-tunnelled traffic is spliced without TLS validation by the proxy (CON-09), so connecting by address costs nothing: the client's own handshake inside the tunnel still validates the certificate against the name it asked for.",
+      "alternatives_considered": [
+        "Check the hostname only (defeated by DNS rebinding)",
+        "Check after connect (too late)"
+      ]
+    },
+    {
+      "decision": "Certificate files are placed during M1 enrolment although mTLS enforcement is M2",
+      "rationale": "FR-16.1. Placing device.crt/key now means #6 does not have to redo enrolment. The files are inert until then.",
+      "alternatives_considered": [
+        "Defer all certificate handling to M2 (forces a second enrolment change)"
+      ]
+    },
+    {
+      "decision": "Sequence tasks by file ownership rather than by dependency alone",
+      "rationale": "The codebase is small and src/mitm.js and src/server.js are each touched by more than one spec. Two agents editing the same file in parallel is the failure the scope field exists to detect, so tasks that share a file are placed in different tiers even where their requirements are logically independent. In practice this forced task-5 behind task-4 (both own src/server.js) and made per-file test scopes necessary, since a shared test/ prefix reads as a collision.",
+      "alternatives_considered": [
+        "Maximise parallelism and accept merge conflicts"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "agent": "backend",
+      "title": "Renew MITM certificates on age, not only on host mismatch",
+      "description": "leafCovers() (src/mitm.js:54) checks the CA signature and the SANs and never reads the validity dates, so an expired leaf is reused rather than replaced and every intercepted TLS connection fails with no self-healing. Lifetimes at issuance are CA 3650 days (src/x509.js:141) and leaf 825 days (:151). Implement docs/specs/m1-certificates.md.",
+      "priority": 1,
+      "dependencies": [],
+      "estimated_complexity": "medium",
+      "acceptance_criteria": [
+        "NFR-17.1 — leafCovers rejects an expired leaf, and one whose remaining life is below the renewal threshold",
+        "NFR-17.2 — the same check applies to the CA certificate; a fresh leaf signed by an expired CA is replaced",
+        "NFR-17.3 — regeneration logs the reason: expired, near expiry, or host mismatch",
+        "NFR-17.4 — leafDays and renewBeforeDays are configurable under proxy.certs, with defaults shorter than today's 825",
+        "A leaf inside the window that covers the hosts is still reused — no needless churn",
+        "docs/configuration.md documents proxy.certs"
+      ],
+      "artifacts_expected": [
+        "src/mitm.js",
+        "src/x509.js",
+        "test/cert-lifetime.test.js",
+        "docs/configuration.md"
+      ],
+      "scope": [
+        "src/mitm.js",
+        "src/x509.js",
+        "test/cert-lifetime.test.js",
+        "docs/configuration.md"
+      ],
+      "test_approach": "tdd",
+      "test_scope": [
+        "unit"
+      ],
+      "tdd_evidence_required": true,
+      "test_approach_rationale": "Pure date comparison driving a replace-or-reuse decision. createLeaf() takes days at issuance (src/x509.js:146) so a chain with a past notAfter can be minted directly — no clock manipulation, and a useful RED state is trivial.",
+      "alternative_verification": ""
+    },
+    {
+      "id": "task-2",
+      "agent": "backend",
+      "title": "Client enrolment writes both configuration locations",
+      "description": "Nothing in src/ reads or writes ~/.claude/settings.json today; buildClaudeEnvLines (src/claude-env.js:33) emits shell exports only. Measured (F14-F17): shell env covers the pre-settings window, user-scope settings.json covers everything after including background agents, and project scope silently bypasses the proxy for background agents. Both are required. Implement docs/specs/m1-enrolment.md.",
+      "priority": 1,
+      "dependencies": [],
+      "estimated_complexity": "high",
+      "acceptance_criteria": [
+        "FR-03.1 — writes to user-scope ~/.claude/settings.json; project scope is never used",
+        "FR-03.2 — also emits the shell export covering the pre-settings window",
+        "FR-03.3 — merges into an existing env block and preserves every unrelated key; the file is not rewritten wholesale",
+        "FR-03.4 — running enrolment twice produces byte-identical output",
+        "FR-03.5 — unenrol removes exactly what was added and leaves the machine reaching the upstream directly",
+        "FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only",
+        "Tests use a fixture settings file carrying unrelated keys, not an empty object"
+      ],
+      "artifacts_expected": [
+        "src/enrol.js",
+        "src/claude-env.js",
+        "test/enrol.test.js"
+      ],
+      "scope": [
+        "src/enrol.js",
+        "src/claude-env.js",
+        "test/enrol.test.js"
+      ],
+      "test_approach": "tdd",
+      "test_scope": [
+        "unit"
+      ],
+      "tdd_evidence_required": true,
+      "test_approach_rationale": "Merge, idempotence and reversibility are exactly the properties that break silently and are cheap to state as failing tests first. FR-03.4 and FR-03.5 are byte-comparison assertions.",
+      "alternative_verification": ""
+    },
+    {
+      "id": "task-3",
+      "agent": "backend",
+      "title": "CONNECT and forward policy: allowlist, address policy, fail-closed listener",
+      "description": "The tunnel branch dials any host on any port with no filtering (src/mitm.js:175, :197), and relayHttpForward (src/server.js:247) is a second unrestricted path. connectAuthorized returns true when no proxy.apiKey is set (src/mitm.js:294), failing open. Implement docs/specs/m1-hardening.md. Emit refusals against .agents/results/api-contracts/m1-error-envelope.md.",
+      "priority": 2,
+      "dependencies": [
+        "task-1"
+      ],
+      "estimated_complexity": "very-high",
+      "acceptance_criteria": [
+        "FR-07.1 — every destination is classified intercept, tunnel or refuse, defaulting to refuse",
+        "FR-07.2 — intercept applies only to the configured upstream host",
+        "FR-07.3 — tunnel applies only to an allowlist held as configuration data",
+        "FR-07.4 — a refusal answers 403 naming the host and opens no socket to it",
+        "FR-07.5 — the shipped allowlist is composed by running a client with it active; each entry records why it is there; what was refused during that run is recorded in the PR",
+        "FR-07.6 — the www.example.org intercept is removable, and off by default when proxy.host is not loopback",
+        "NFR-20.1 — a non-loopback proxy.host with no proxy.apiKey fails at startup naming the missing setting",
+        "NFR-20.2 — the loopback auth exemption is disableable, and off by default when proxy.host is not loopback",
+        "NFR-21.1 — a destination resolving to loopback, link-local or private is refused even when allowlisted",
+        "NFR-21.2 — the connection is made to the address that was checked, not to the name",
+        "NFR-21.3 — tunnelled destinations are restricted to port 443",
+        "NFR-21.4 — relayHttpForward enforces the same host and address policy",
+        "With proxy.host on loopback every current behaviour is unchanged",
+        "No runtime dependency is added; address classification uses node:net and node:dns"
+      ],
+      "artifacts_expected": [
+        "src/mitm.js",
+        "src/server.js",
+        "src/index.js",
+        "test/connect-policy.test.js",
+        "docs/configuration.md"
+      ],
+      "scope": [
+        "src/mitm.js",
+        "src/server.js",
+        "src/index.js",
+        "test/connect-policy.test.js",
+        "docs/configuration.md"
+      ],
+      "test_approach": "tdd",
+      "test_scope": [
+        "unit",
+        "integration"
+      ],
+      "tdd_evidence_required": true,
+      "test_approach_rationale": "Security-relevant authorisation and destination decisions. NFR-21.2 in particular is only demonstrable by a test that makes a name answer differently on a second lookup, which forces the resolver seam to be designed rather than retrofitted.",
+      "alternative_verification": ""
+    },
+    {
+      "id": "task-4",
+      "agent": "backend",
+      "title": "Distinguish proxy-originated failures and document the way back",
+      "description": "Three separate transport failures all report proxy_error / 'Upstream unreachable' (src/server.js:276, :551, :659) and a fourth reports 'Internal proxy error' (:489). Tolerable when the operator is the user; not once the proxy is elsewhere. The existing 403 handler (:745) is the model to extend. Implement docs/specs/m1-failure-modes.md against the error-envelope contract.",
+      "priority": 3,
+      "dependencies": [
+        "task-3"
+      ],
+      "estimated_complexity": "medium",
+      "acceptance_criteria": [
+        "FR-17.1 — each failure class produces a distinct error.type per the contract",
+        "FR-17.2 — an actionable failure names the concrete step, following the shape of src/server.js:745",
+        "FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request",
+        "NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly",
+        "Existing 403, 429 and pin tests still pass unchanged"
+      ],
+      "artifacts_expected": [
+        "src/server.js",
+        "test/failure-modes.test.js",
+        "docs/usage.md"
+      ],
+      "scope": [
+        "src/server.js",
+        "test/failure-modes.test.js",
+        "docs/usage.md"
+      ],
+      "test_approach": "tdd",
+      "test_scope": [
+        "unit"
+      ],
+      "tdd_evidence_required": true,
+      "test_approach_rationale": "Response classification is deterministic and asserted directly on the body. The correlation id's log correlation is likewise a direct assertion.",
+      "alternative_verification": ""
+    },
+    {
+      "id": "task-5",
+      "agent": "backend",
+      "title": "Detect a partially configured client",
+      "description": "FR-18.1. ASM-13 records that nothing detects a half-configured machine: if one of the two configuration locations is lost, traffic leaks silently and everything appears to work. The detectable half uses a signal already on the wire — the pre-settings request arrives only when the shell export is present, so a session whose first contact is the post-settings burst was configured by settings.json alone.",
+      "priority": 4,
+      "dependencies": [
+        "task-2",
+        "task-3",
+        "task-4"
+      ],
+      "estimated_complexity": "medium",
+      "acceptance_criteria": [
+        "FR-18.1 — a session that first appears after settings load is reported as partially configured, naming the missing location",
+        "The report is visible without reading logs — activity stream or status endpoint",
+        "The inverse case (settings missing, shell present) is documented as not detectable proxy-side, with the reason",
+        "No false positive for a correctly enrolled client"
+      ],
+      "artifacts_expected": [
+        "src/server.js",
+        "test/partial-config.test.js"
+      ],
+      "scope": [
+        "src/server.js",
+        "test/partial-config.test.js"
+      ],
+      "test_approach": "tdd",
+      "test_scope": [
+        "unit"
+      ],
+      "tdd_evidence_required": true,
+      "test_approach_rationale": "Detection is a function of the observed request sequence, which a test can feed directly. The undetectable inverse case is documentation, not code, and is carved out in the acceptance criteria.",
+      "alternative_verification": ""
+    },
+    {
+      "id": "task-6",
+      "agent": "qa",
+      "title": "Security review of the M1 boundary",
+      "description": "Adversarial review of what M1 changed, against the threat that motivated it: an authenticated tenant using the operator's network position. Not a general audit — the boundary is the destination policy, the authorisation gate, and the certificate lifecycle.",
+      "priority": 5,
+      "dependencies": [
+        "task-3",
+        "task-4",
+        "task-5"
+      ],
+      "estimated_complexity": "medium",
+      "acceptance_criteria": [
+        "Attempts SSRF by name, by literal address, by redirect, and by a name that changes between resolution and connect; each is refused",
+        "Confirms no configuration reachable by omission leaves the listener open off-box",
+        "Confirms refusal messages leak nothing about the operator's internal network",
+        "Confirms the loopback path is unchanged for existing local users",
+        "Findings recorded with severity and a reproduction"
+      ],
+      "artifacts_expected": [
+        ".agents/results/result-qa.md"
+      ],
+      "scope": [],
+      "test_approach": "not_applicable",
+      "test_scope": [],
+      "tdd_evidence_required": false,
+      "test_approach_rationale": "A review produces findings, not code. The behaviours it probes are already covered by the tests written in task-3 and task-5; adding a parallel suite here would duplicate them without adding assurance.",
+      "alternative_verification": "Adversarial probing against a running instance, with each attempt and its outcome recorded in .agents/results/result-qa.md. Anything that gets through becomes a failing test in the owning task before the finding is closed."
+    },
+    {
+      "id": "task-7",
+      "agent": "docs",
+      "title": "Bring the documentation in line with what M1 shipped",
+      "description": "M1 changes the configuration surface, the failure messages, and how a client is set up. docs/configuration.md, docs/proxy-modes.md and docs/usage.md all describe the current behaviour and will be wrong in places.",
+      "priority": 5,
+      "dependencies": [
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-5"
+      ],
+      "estimated_complexity": "low",
+      "acceptance_criteria": [
+        "proxy.connect and proxy.certs documented in docs/configuration.md alongside the existing keys",
+        "docs/proxy-modes.md no longer claims arbitrary hosts are blind-tunnelled",
+        "Enrolment and unenrol documented, with unenrol named as the recovery step when the service is unreachable",
+        "docs/specs/ requirement IDs still resolve to what was built; any divergence is corrected in the spec, not silently in the code",
+        "No documentation references a file, flag or config key that does not exist"
+      ],
+      "artifacts_expected": [
+        "docs/configuration.md",
+        "docs/proxy-modes.md",
+        "docs/usage.md"
+      ],
+      "scope": [
+        "docs/"
+      ],
+      "test_approach": "not_applicable",
+      "test_scope": [],
+      "tdd_evidence_required": false,
+      "test_approach_rationale": "Prose. There is no behaviour to assert.",
+      "alternative_verification": "Every config key, file path and command named in the changed pages is checked against the source; the check is recorded in the PR description."
+    }
+  ],
+  "api_contracts": [
+    {
+      "endpoint": "proxy-originated error envelope",
+      "method": "GET",
+      "request": {},
+      "response": {
+        "type": "error",
+        "error": {
+          "type": "destination_not_allowed|destination_address_blocked|destination_port_not_allowed|upstream_unreachable|proxy_internal_error|authentication_error|rate_limit_error",
+          "message": "string"
+        }
+      },
+      "headers": {
+        "retry-after": "seconds, on 429 only"
+      }
+    }
+  ],
+  "data_models": [
+    {
+      "entity": "proxy.connect (configuration)",
+      "fields": {
+        "allow": "string[] — hostnames permitted to blind-tunnel; the upstream host is implicit and not listed",
+        "allowPrivateAddresses": "boolean — default false when proxy.host is not loopback",
+        "allowLoopbackClients": "boolean — default false when proxy.host is not loopback",
+        "testHost": "boolean — default false when proxy.host is not loopback"
+      }
+    },
+    {
+      "entity": "proxy.certs (configuration)",
+      "fields": {
+        "leafDays": "number — leaf lifetime, default shorter than today's 825",
+        "renewBeforeDays": "number — renew this far ahead of expiry"
+      }
+    }
+  ],
+  "non_functional_requirements": {
+    "security": [
+      "NFR-20 — authenticate every non-loopback client; fail closed when no credential is configured",
+      "NFR-21 — constrain where the proxy may open a connection, checking the resolved address and connecting to it",
+      "No runtime dependency may be added; the address classifier is written against node:net"
+    ],
+    "performance": [
+      "NFR-06 — the edge adds no measurable latency; measured at 5.00s vs 5.01s direct (F07, F08). Address resolution adds one lookup per CONNECT and must not be per-request when cacheable"
+    ],
+    "scalability": [
+      "Out of scope for M1 — one operator, own accounts. Tenant fair-share is #23 in M4"
+    ]
+  },
+  "testing_strategy": {
+    "unit_tests": "node --test, the repository's existing harness. Each spec's §5 table maps requirement to test one-to-one; those tables are the acceptance criteria.",
+    "integration_tests": "task-3 needs a resolver seam so a test can force a name to a private address and make it answer differently on a second lookup. That seam is what makes NFR-21.2 implementable at all.",
+    "e2e_tests": "FR-07.5 is discharged by running a real client with the allowlist active and recording what was refused. It is a validation activity, not a unit test, and has no row in any spec test table.",
+    "performance_tests": "None for M1. The latency claim is already measured (F07, F08)."
+  },
+  "project_controls": {
+    "iso_21500": {
+      "scope_defined": true,
+      "stakeholders_identified": [
+        "operator (the account owner, and the only M1 user)",
+        "maintainer",
+        "future tenants — out of scope until M2"
+      ],
+      "dependencies_mapped": true
+    },
+    "iso_31000": {
+      "top_risks": [
+        "RSK-03 — a client release moves the behaviour this design rests on (H/H); F03 and F06 each caught it moving",
+        "RSK-04 — the upstream response contract changes and quota tracking degrades silently (M/H); UNTREATED, and nothing watches for it",
+        "RSK-02 — the allowlist refuses a host a real session needs (M/M); composed from -p and --bg observations only",
+        "RSK-07 — an operator deliberately opens a hardening switch (L/M); defaults guard omission, not intent",
+        "RSK-01 — limits key on the egress IP, so pooling yields no multiple (M/H); observable once M1 runs"
+      ],
+      "treatments": [
+        "RSK-03 — NFR-10 canary before adopting a release as the floor; NFR-22 isolates the tracking code",
+        "RSK-04 — none in M1. Closing it means building the watch, which belongs with the canary in #16",
+        "RSK-02 — FR-07.5 composes the allowlist by running a client and recording refusals",
+        "RSK-07 — defaults derive from proxy.host so the unsafe state needs intent (NFR-20)",
+        "RSK-01 — egress.pin and sx.mode already exist; residual is metered bandwidth against donations (CON-08)"
+      ],
+      "register": "docs/saas-requirements.md §10 — RSK-01 … RSK-08, rated with owner and residual"
+    },
+    "iso_38500": {
+      "decision_owner": "repository owner",
+      "approval_required_for": [
+        "The composed allowlist (FR-07.5) — it decides what a client can still reach",
+        "Shortened certificate defaults (NFR-17.4) — renewal cadence is operator-visible",
+        "Any deviation from a spec requirement; the spec is corrected first, not the code silently"
+      ]
+    }
+  }
+}
