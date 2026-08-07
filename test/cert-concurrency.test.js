@@ -178,8 +178,12 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
   // intercepted CONNECT calls — never returns a CA and a leaf that disagree, and
   // never throws while another process is writing.
   //
-  // Contention is forced the way it actually arises: the chain falls due, every
-  // process notices at once, and they all want the *same* host.
+  // Counted, not timed. The first version ran for a fixed window and asserted the
+  // checker had managed 50 calls; on a CI runner already busy with two other Node
+  // processes minting keypairs it managed **five**, and failed for being slow
+  // rather than for being wrong. Fixed iteration counts make the work identical
+  // on every machine, and keep the load small enough not to disturb the
+  // timing-sensitive tests running beside it.
   wipe();
   await ensureCerts(HOST, { config: {} });
   const dir = JSON.stringify(TMP);
@@ -187,13 +191,14 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
 
   const churn = join(TMP, 'churn.mjs');
   const check = join(TMP, 'check.mjs');
+  // The churners outlast the checker, so contention does not stop halfway.
   writeFileSync(churn, `
     import { rmSync } from 'node:fs';
     process.env.TEAMCLAUDE_CONFIG = ${dir} + '/config.json';
     const { ensureCerts } = await import(${mitm});
     while (Date.now() < Number(process.argv[2])) {}
     let errors = 0;
-    while (Date.now() < Number(process.argv[3])) {
+    for (let i = 0; i < 24; i++) {
       // A renewal falling due, from this process's point of view.
       rmSync(${dir} + '/teamclaude-leaf.pem', { force: true });
       try { await ensureCerts('${HOST}', { config: {} }); } catch { errors++; }
@@ -205,9 +210,9 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
     process.env.TEAMCLAUDE_CONFIG = ${dir} + '/config.json';
     const { ensureCerts } = await import(${mitm});
     while (Date.now() < Number(process.argv[2])) {}
-    let calls = 0, incoherent = 0, errors = 0, minted = 0;
-    while (Date.now() < Number(process.argv[3])) {
-      calls++;
+    let incoherent = 0, errors = 0, minted = 0;
+    const calls = 12;
+    for (let i = 0; i < calls; i++) {
       try {
         const c = await ensureCerts('${HOST}', { config: {}, log: (m) => { if (/regenerating|minting/.test(m)) minted++; } });
         const ca = new X509Certificate(c.caCertPem);
@@ -219,9 +224,8 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
 
   const { spawn } = await import('node:child_process');
   const from = String(Date.now() + 1500);
-  const until = String(Date.now() + 7000);
   const run = (script) => new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, [script, from, until]);
+    const p = spawn(process.execPath, [script, from]);
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.once('error', reject);
@@ -230,12 +234,12 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
   const [e1, e2, checkerOut] = await Promise.all([run(churn), run(churn), run(check)]);
   const { calls, incoherent, errors, minted } = JSON.parse(checkerOut);
 
-  assert.ok(calls > 50, `only ${calls} calls — the window was too short to mean anything`);
   assert.equal(incoherent, 0,
     `ensureCerts returned ${incoherent} chains that do not verify, in ${calls} calls (${minted} minted)`);
   assert.equal(errors, 0, `ensureCerts threw ${errors} times while another process was writing`);
   // On Windows a rename over a file another process holds is EPERM: 4-10 times
   // per process before the retry.
+  assert.equal(`${e1}${e2}`, '00', `the writers failed ${e1}+${e2} times`);
   //
   // `minted` is reported but not asserted. The two re-checks — the re-read of a
   // torn pair, and the second look under the lock — only avoid *redundant*
@@ -244,5 +248,4 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
   // under a noisy concurrent load, so a threshold here would be flaky. Removing
   // either one alone changes no behaviour this suite can see, and removing both
   // changes only the cost. Recorded rather than asserted.
-  assert.equal(`${e1}${e2}`, '00', `the writers failed ${e1}+${e2} times`);
 });
