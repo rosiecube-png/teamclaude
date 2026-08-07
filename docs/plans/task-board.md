@@ -167,12 +167,12 @@
 - **Agent**: docs
 - **CLI**: claude
 - **Title**: Bring the documentation in line with what M1 shipped
-- **Status**: pending
+- **Status**: done
 - **Priority**: 6
 - **Dependencies**: task-1, task-2, task-3, task-4, task-5
 - **Exposed Skills**: oma-docs
 - **Exposure Fallback**: false
-- **Scope**: docs/
+- **Scope**: docs/, test/docs-references.test.js
 - **Test Approach**: not_applicable
 - **Description**: M1 changes the configuration surface, the failure messages, and how a client is set up. docs/configuration.md, docs/proxy-modes.md and docs/usage.md all describe the current behaviour and will be wrong in places.
 - **Acceptance Criteria**:
