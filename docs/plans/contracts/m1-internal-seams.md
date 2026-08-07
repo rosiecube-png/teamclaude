@@ -102,7 +102,7 @@ export function newCorrelationId() { … }   // 8 lowercase hex characters
 | | |
 | --- | --- |
 | **Request path** | Generated where `ctx` is built (`src/server.js:477`) and carried as `ctx.correlationId` |
-| **CONNECT path** | Generated per refusal in the connect handler; there is no request to correlate, only the refusal itself |
+| **CONNECT path** | Generated per refusal in the connect handler, and written **only to the log**. A refused CONNECT is a bare status line (`403`, no body — see the [error envelope](m1-error-envelope.md)), so there is nowhere in the response to carry an id |
 | **In the log** | Prefixed to any line about a specific request: `[TeamClaude] [7f3a9c21] …` |
 | **In the response** | Appended to `message`, never a new field — the envelope stays what clients parse |
 
@@ -111,8 +111,14 @@ concern; conflating the two would change TUI behaviour for no benefit.
 
 ### Scope
 
-Only failures the user cannot act on carry an id (FR-17.3). A destination refusal names
-the host and is actionable, so it carries none — see FR-17.2.
+Only failures the user cannot act on carry an id (FR-17.3). A destination refusal names the
+host and is actionable, so it carries none — see FR-17.2.
+
+**The two refusal paths differ, and S2 has to account for it.** A request-path refusal is a
+`400` with the envelope, so it *could* carry an id and deliberately does not. A CONNECT
+refusal has no envelope at all, so it *could not* even if we wanted one — its id exists
+only to correlate the server log. An operator asked about a refused CONNECT has the log
+line and the user has the status; those are joined by host and time, not by an id.
 
 ---
 

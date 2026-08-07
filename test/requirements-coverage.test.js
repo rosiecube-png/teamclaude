@@ -105,6 +105,43 @@ test('every assumption carries a verification status', () => {
   }
 });
 
+// The four omissions a review found after "everything is synchronised" was
+// claimed: governance not recomputed, the risk blocks drifting apart, a contract
+// left inconsistent with another contract, and no record of what followed from
+// what. Each is now a check rather than a promise.
+
+test('the plan and the register describe the same risks', () => {
+  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
+  const inPlan = [...new Set(
+    (JSON.stringify(plan.project_controls.iso_31000).match(/RSK-\d\d/g) || []))].sort();
+  const inDoc = [...new Set((doc().match(/\| \*\*RSK-\d\d\*\*/g) || [])
+    .map((x) => x.replace(/[|*\s]/g, '')))].sort();
+  assert.deepEqual(inPlan, inDoc,
+    'the risk register in §10 and the plan iso_31000 block have drifted apart');
+});
+
+test('a measured finding that changed a contract is traced', () => {
+  const trace = readFileSync('docs/plans/change-log.md', 'utf8');
+  // every assumption the register marks measured-false changed something, so it
+  // has to appear in the trace with what it touched
+  const falsified = (doc().match(/\| \*\*ASM-\d+\*\*[^|]*\| [^|]*measured false/g) || [])
+    .map((r) => r.match(/ASM-\d+/)[0]);
+  const untraced = falsified.filter((id) => !trace.includes(id));
+  assert.deepEqual(untraced, [],
+    `these findings changed something and are not in the change trace: ${untraced.join(', ')}`);
+});
+
+test('the two contracts agree about refusals', () => {
+  const envelope = readFileSync('docs/plans/contracts/m1-error-envelope.md', 'utf8');
+  const seams = readFileSync('docs/plans/contracts/m1-internal-seams.md', 'utf8');
+  assert.ok(/request-path/.test(envelope) && /400/.test(envelope),
+    'the error envelope no longer distinguishes the request path');
+  // S2 places a correlation id; a CONNECT refusal has no body to carry one
+  assert.ok(/only to the log/.test(seams),
+    'the seams contract must say a CONNECT refusal carries its id in the log alone, ' +
+    'since the envelope gives that path no body');
+});
+
 test('the M1 plan is validated against the register it ships with', () => {
   const planPath = 'docs/plans/m1-plan.json';
   assert.ok(existsSync(planPath), 'the durable M1 plan is missing');
