@@ -211,14 +211,16 @@
         "src/server.js",
         "src/index.js",
         "test/connect-policy.test.js",
-        "docs/configuration.md"
+        "docs/configuration.md",
+        "src/destination-policy.js"
       ],
       "scope": [
         "src/mitm.js",
         "src/server.js",
         "src/index.js",
         "test/connect-policy.test.js",
-        "docs/configuration.md"
+        "docs/configuration.md",
+        "src/destination-policy.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
@@ -228,7 +230,7 @@
       "tdd_evidence_required": true,
       "test_approach_rationale": "Security-relevant authorisation and destination decisions. NFR-21.2 in particular is only demonstrable by a test that makes a name answer differently on a second lookup, which forces the resolver seam to be designed rather than retrofitted.",
       "alternative_verification": "",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "task-4",

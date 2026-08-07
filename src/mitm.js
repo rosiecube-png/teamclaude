@@ -20,17 +20,22 @@ import tls from 'node:tls';
 import http2 from 'node:http2';
 import { getConfigPath } from './config.js';
 import { generateCertChain, DEFAULT_LEAF_DAYS } from './x509.js';
+import { createDestinationPolicy, pinnedLookup, TEST_HOST } from './destination-policy.js';
 import { createProxyRequestListener, safeKeyEqual, isLoopbackAddr, relayUpgrade, resolveAccountPin } from './server.js';
 
 const CA_CERT = 'teamclaude-ca.pem';
 const LEAF_CERT = 'teamclaude-leaf.pem';
 const LEAF_KEY = 'teamclaude-leaf.key';
 
-// A built-in host the MITM proxy always intercepts and answers itself (never
-// forwarded upstream). Lets you verify the proxy + CA end-to-end with no
-// credentials, e.g.:
+// A built-in host the MITM proxy intercepts and answers itself (never forwarded
+// upstream). Lets you verify the proxy + CA end-to-end with no credentials:
 //   curl --proxy http://localhost:3456 --cacert <ca.pem> https://www.example.org/
-export const TEST_HOST = 'www.example.org';
+//
+// Defined by the destination policy, which is what decides whether it is
+// intercepted at all — off by default when the listener is not on loopback
+// (FR-07.6), since answering for a domain we do not own is not acceptable on a
+// shared node. Re-exported so existing importers are unaffected.
+export { TEST_HOST };
 
 const certDir = () => dirname(getConfigPath());
 const fpath = (n) => join(certDir(), n);
@@ -167,26 +172,19 @@ export async function ensureCerts(host, { config = null, log = () => {} } = {}) 
   };
 }
 
-function upstreamHostOf(config) {
-  try { return new URL(config?.upstream || 'https://api.anthropic.com').hostname; }
-  catch { return 'api.anthropic.com'; }
-}
-
-/** Per-CONNECT behavior: 'rewrite' (intercept + token inject), 'test', or 'tunnel'. */
-export function hostMode(host, config) {
-  if (host === TEST_HOST) return 'test';
-  if (host === upstreamHostOf(config)) return 'rewrite';
-  return 'tunnel';
-}
 
 /**
  * Build a `connect` event handler implementing the terminating MITM described at
  * the top of this file.
  * @param ensureLeaf async () => { key, cert }   // current leaf PEMs, re-read per call
  */
-export function createConnectHandler({ config, accountManager, ensureLeaf, logDir = null, hooks = {}, log = () => {}, sx = null, egress = null }) {
+export function createConnectHandler({ config, accountManager, ensureLeaf, logDir = null, hooks = {}, log = () => {}, sx = null, egress = null, policy = null }) {
   const upstream = config.upstream || 'https://api.anthropic.com';
   const proxyApiKey = config.proxy?.apiKey;
+  // Injected, but never absent in practice — a handler built without one would
+  // be the unrestricted forward proxy this exists to close, so it makes its own.
+  const destinations = policy || createDestinationPolicy(config, { log });
+  const allowLoopbackClients = destinations.options.allowLoopbackClients;
   const holdMs = (config.holdSeconds || 0) * 1000;
 
   // One terminating h2/h1 server per pin, minted lazily on the first intercepted
@@ -240,7 +238,7 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
     return entry.promise;
   };
 
-  return (req, clientSocket, head) => {
+  return async (req, clientSocket, head) => {
     clientSocket.on('error', () => {});
 
     // Auth gate — mirror the HTTP path: loopback is exempt, everything else must
@@ -248,7 +246,7 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
     // client can CONNECT api.anthropic.com and have a rotated ACCOUNT TOKEN
     // injected (token theft), or blind-tunnel to arbitrary hosts (open relay /
     // SSRF) — the HTTP path already blocks the equivalent for remote clients.
-    if (!connectAuthorized(req, clientSocket, proxyApiKey)) {
+    if (!connectAuthorized(req, clientSocket, proxyApiKey, { allowLoopbackClients })) {
       try {
         clientSocket.write('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="teamclaude"\r\nConnection: close\r\n\r\n');
       } catch { /* client already gone */ }
@@ -258,7 +256,21 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
 
     const [host, portStr] = (req.url || '').split(':');
     const port = parseInt(portStr, 10) || 443;
-    const mode = hostMode(host, config);
+
+    // FR-07.1 — every destination is classified, and refusal is the default.
+    // The verdict carries the address it approved so nothing below re-resolves.
+    const verdict = await destinations.classify(host, port);
+    if (verdict.action === 'refuse') {
+      // FR-07.4 — a status line and nothing else. The tunnel never opens, so
+      // there is no body to carry an envelope, and no socket is dialled.
+      log(`[TeamClaude] refused CONNECT ${host}:${port} — ${verdict.detail}`);
+      try {
+        clientSocket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      } catch { /* client already gone */ }
+      clientSocket.destroy();
+      return;
+    }
+    const mode = verdict.action === 'tunnel' ? 'tunnel' : verdict.mode;
 
     if (mode === 'tunnel') {
       // Until the upstream connects we still owe the client a CONNECT status
@@ -279,7 +291,9 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
         }
         up.destroy(); clientSocket.destroy();
       };
-      const up = net.connect(port, host, () => {
+      // NFR-21.2 — the name still travels, but resolution cannot happen twice:
+      // `lookup` answers only with what the policy approved.
+      const up = net.connect({ port, host, lookup: pinnedLookup(verdict.addresses) }, () => {
         established = true;
         reply200Raw(clientSocket);
         if (head && head.length) up.write(head);
@@ -375,9 +389,14 @@ export function resolveConnectPin(req, accountManager, proxyApiKey) {
 // loopback client is exempt; otherwise the proxy apiKey must be presented via
 // `Proxy-Authorization` (Bearer <key>, or Basic where the key is the username
 // or password — so `--proxy http://<key>@host:port` works). Exported for tests.
-export function connectAuthorized(req, socket, proxyApiKey) {
+export function connectAuthorized(req, socket, proxyApiKey, { allowLoopbackClients = true } = {}) {
   if (!proxyApiKey) return true;
-  if (isLoopbackAddr(socket?.remoteAddress)) return true;
+  // NFR-20.2 — right for a local proxy, where the operator's own machine is the
+  // client. On a hosted node it means anything sharing that loopback interface
+  // — a sidecar, another container in the same namespace, a compromised process
+  // — is unauthenticated, so it defaults off whenever the listener is not bound
+  // to loopback.
+  if (allowLoopbackClients && isLoopbackAddr(socket?.remoteAddress)) return true;
   const m = /^\s*(basic|bearer)\s+(.+?)\s*$/i.exec(req?.headers?.['proxy-authorization'] || '');
   if (!m) return false;
   let presented = m[2];
