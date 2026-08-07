@@ -542,6 +542,49 @@ It now sets the pair open itself, so completing the plan cannot switch it off.
 
 ---
 
+## 2026-08-07 — task-7, making the documentation true again
+
+| | |
+| --- | --- |
+| Docs | `proxy-modes.md` corrected — the one sentence M1 falsified |
+| Test | `test/docs-references.test.js`, 6 checks |
+| Plan | task-7 `status: done`. **M1 is 8/8** |
+| Board | regenerated |
+| Others | n/a — nothing behavioural changed |
+
+### One sentence was false, and the check written to find it did not
+
+> Any host other than the upstream is blind-tunnelled.
+
+True until task-3. Off-loopback such a host is refused unless allowlisted, and refused
+regardless if it resolves to a private address or asks for a port other than 443.
+
+The check for exactly this claim **passed over it**. The pattern was written from the
+requirement's wording (*anything else*) rather than from the document's (*any host other
+than the upstream*), so it matched nothing and reported nothing. It was only found by
+reading the file the criterion named. Tightened, and shown to fail against the original
+sentence.
+
+### The checker was wrong before the documentation was
+
+The first version built its word matcher as ``new RegExp(`${leaf}`)``. Inside a
+**template literal** `` is a backspace character, not a word boundary — so it reported
+all 18 documented `proxy.*` keys as unread while every one of them existed.
+
+A checker that fails loudly is recoverable. This one failed *convincingly*: eighteen
+plausible findings, in the right format, about real keys. It now has a test asserting that
+its matcher matches `port` and not `support`, which is a small thing to assert and the only
+thing standing between a checker and a generator of confident nonsense.
+
+### What is checked from now on
+
+Relative links resolve · every `src/` file named exists · every `proxy.*` key is read by
+the code · every `teamclaude <cmd>` is dispatched · no document still describes what M1
+replaced. `docs/plans/` and `docs/specs/` are exempt from the last one on purpose: the
+trace and the specs keep a record of what changed, and that is the point of them.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

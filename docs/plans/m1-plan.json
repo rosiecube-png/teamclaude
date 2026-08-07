@@ -385,19 +385,19 @@
         "No documentation references a file, flag or config key that does not exist"
       ],
       "artifacts_expected": [
-        "docs/configuration.md",
-        "docs/proxy-modes.md",
-        "docs/usage.md"
+        "docs/",
+        "test/docs-references.test.js"
       ],
       "scope": [
-        "docs/"
+        "docs/",
+        "test/docs-references.test.js"
       ],
       "test_approach": "not_applicable",
       "test_scope": [],
       "tdd_evidence_required": false,
       "test_approach_rationale": "Prose. There is no behaviour to assert.",
       "alternative_verification": "Every config key, file path and command named in the changed pages is checked against the source; the check is recorded in the PR description.",
-      "status": "pending"
+      "status": "done"
     }
   ],
   "api_contracts": [

@@ -24,7 +24,7 @@ MITM mode launches claude pointed at TeamClaude as an **HTTPS forward proxy** (`
 - reads `anthropic-ratelimit-*` from responses for quota; and
 - **resends the request on a different account** if one returns a quota `429`, so a "you've reached your limit" is never surfaced while another account has headroom.
 
-Because the request is buffered, the retry is transparent to claude. Client token refreshes (`/v1/oauth/token`), Remote Control (`/v1/code/*`) and claude.ai attachment transfers (`/api/oauth/files/*`, `/api/oauth/file_upload`) are passed through with the client's own credential, since they are bound to the paired identity and would 403 under a rotated token. Any host other than the upstream is blind-tunnelled. The server accepts *both* base-URL and proxy clients at once, so instances launched with and without `--no-mitm` can share one server.
+Because the request is buffered, the retry is transparent to claude. Client token refreshes (`/v1/oauth/token`), Remote Control (`/v1/code/*`) and claude.ai attachment transfers (`/api/oauth/files/*`, `/api/oauth/file_upload`) are passed through with the client's own credential, since they are bound to the paired identity and would 403 under a rotated token. What happens to any **other** host depends on where the listener is bound. On loopback it is blind-tunnelled, as it always has been. Bound anywhere else it is refused unless it is on `proxy.connect.allow`, and refused regardless if it resolves to a private address or asks for a port other than 443 — see [Where the proxy may connect](configuration.md#where-the-proxy-may-connect). The server accepts *both* base-URL and proxy clients at once, so instances launched with and without `--no-mitm` can share one server.
 
 ### Trust model
 
