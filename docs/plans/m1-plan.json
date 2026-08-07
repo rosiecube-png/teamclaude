@@ -212,7 +212,8 @@
         "src/index.js",
         "test/connect-policy.test.js",
         "docs/configuration.md",
-        "src/destination-policy.js"
+        "src/destination-policy.js",
+        "test/streaming-through-policy.test.js"
       ],
       "scope": [
         "src/mitm.js",
@@ -220,7 +221,8 @@
         "src/index.js",
         "test/connect-policy.test.js",
         "docs/configuration.md",
-        "src/destination-policy.js"
+        "src/destination-policy.js",
+        "test/streaming-through-policy.test.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
