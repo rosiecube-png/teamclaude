@@ -120,15 +120,16 @@ test('the two contracts disagreeing about refusals is caught', () => {
 });
 
 test('two tasks in one tier owning the same file is caught', () => {
-  // task-6 and task-7, because they are both still open. The guard ignores
-  // finished tasks by design, so a mutation using done ones proves nothing.
+  // The guard ignores finished tasks by design, so the mutation sets the pair
+  // open itself rather than borrowing whichever two happen to be. Picking real
+  // ones was fine until they were both completed, and then the mutation quietly
+  // stopped mutating anything.
   assert.ok(omissionIsCaught(PLAN, editJson((p) => {
-    const a = p.tasks.find((t) => t.id === 'task-6');
-    const b = p.tasks.find((t) => t.id === 'task-7');
-    assert.notEqual(a.status, 'done');
-    assert.notEqual(b.status, 'done');
-    b.scope.push(a.scope[0]);
+    const [a, b] = p.tasks;
+    a.status = 'pending';
+    b.status = 'pending';
     b.priority = a.priority;
+    b.scope.push(a.scope[0]);
   })));
 });
 

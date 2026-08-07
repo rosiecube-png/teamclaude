@@ -480,6 +480,68 @@ proxy URL is not a comment. A mutation that removed the string handling failed f
 
 ---
 
+## 2026-08-07 — task-6, the M1 boundary attacked
+
+Not described. Twelve cases written from the attacker's side, each an attempt to reach
+somewhere the proxy should not go, holding a valid proxy key — which in a hosted
+deployment every tenant does.
+
+| | |
+| --- | --- |
+| Register | n/a — both findings are the implementation not meeting NFR-20, not the requirement being wrong |
+| Plan | task-6 `status: done`, with both findings, their severity and their reproduction |
+| Board | regenerated |
+| Test | `test/m1-boundary-review.test.js`, 12 cases |
+| Issue | [#8](../../issues/8), [#20](../../issues/20) |
+| Others | n/a |
+
+**Where a refusal status is not enough**, the case counts connections to a listener that
+must never be dialled — "refused" and "dialled, then refused" look identical from the
+client, and the second is the vulnerability.
+
+### F-1 — high — the upgrade listener authorised nobody
+
+There are **three** egress paths, not two. The request path checks `x-api-key`, the CONNECT
+path checks `Proxy-Authorization`, and `server.on('upgrade', …)` checked neither.
+
+Reproduced with a bare WebSocket handshake carrying no key against a hosted listener; the
+proxy dialled upstream on the client's behalf:
+
+```
+[TeamClaude] Remote Control WebSocket relay error: getaddrinfo ENOTFOUND api.anthropic.comhttp
+```
+
+No account token is injected there, so this is not credential theft — it is NFR-20's
+fail-closed requirement covering two paths out of three. Fixed with a single
+`clientAuthorized()` both paths now consult, and the mutation that removes it fails the
+test.
+
+### F-2 — low — the relay concatenated the client's request line
+
+`relayUpgrade` built `${upstream}${req.url}`. An absolute-form request line produced the
+hostname `api.anthropic.comhttp`, which failed to resolve rather than reaching anywhere —
+luck, not a check. The relay only ever addresses the configured upstream, so a target that
+is not a path is a `400` now.
+
+### What was attacked and held
+
+By literal address in both v4 and IPv4-mapped v6 form; by an allowlisted name resolving
+inside; by a split answer in both orderings; by a name that answers differently on the
+second lookup; by a redirect toward a private address; and by omission — every switch
+verified closed when the listener is not loopback, and open exactly as before when it is.
+
+A refusal was also checked for what it gives away: it names the range and the destination
+the client already knew, and **not** the address the name resolved to. Handing that back
+would turn a refusal into a scan of the operator's network.
+
+### One guard was quietly asleep
+
+The mutation proving *two tasks in one tier owning the same file is caught* borrowed
+task-6 and task-7 because they were open. Finishing task-6 stopped it mutating anything.
+It now sets the pair open itself, so completing the plan cannot switch it off.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

@@ -333,15 +333,35 @@
         "NFR-27 — each finding carries a severity, becomes a failing test in the task that owns the behaviour, and no high finding is left open"
       ],
       "artifacts_expected": [
-        ".agents/results/result-qa.md"
+        "test/m1-boundary-review.test.js",
+        "src/server.js"
       ],
-      "scope": [],
+      "scope": [
+        "test/m1-boundary-review.test.js",
+        "src/server.js"
+      ],
       "test_approach": "not_applicable",
       "test_scope": [],
       "tdd_evidence_required": false,
       "test_approach_rationale": "A review produces findings, not code. The behaviours it probes are already covered by the tests written in task-3 and task-5; adding a parallel suite here would duplicate them without adding assurance.",
       "alternative_verification": "Adversarial probing against a running instance, with each attempt and its outcome recorded in .agents/results/result-qa.md. Anything that gets through becomes a failing test in the owning task before the finding is closed. A high-severity finding blocks M1 from closing (NFR-27).",
-      "status": "pending"
+      "status": "done",
+      "findings": [
+        {
+          "id": "F-1",
+          "severity": "high",
+          "title": "the upgrade listener consulted no authorisation",
+          "repro": "A bare WebSocket handshake with no x-api-key against a hosted listener; the proxy dialled upstream on the client behalf, logging \"Remote Control WebSocket relay error\".",
+          "fix": "clientAuthorized() applied to the upgrade listener; test F-1 in test/m1-boundary-review.test.js"
+        },
+        {
+          "id": "F-2",
+          "severity": "low",
+          "title": "relayUpgrade concatenated req.url onto the upstream URL",
+          "repro": "An absolute-form request line produced the hostname api.anthropic.comhttp, which failed to resolve rather than reaching anywhere.",
+          "fix": "The relay only addresses the configured upstream, so a non-path target is a 400; test F-2"
+        }
+      ]
     },
     {
       "id": "task-7",

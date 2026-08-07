@@ -222,7 +222,16 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   // call — Node fires 'upgrade' for that handshake, never 'request', so it
   // needs its own listener (base-URL routing path; the MITM path wires the
   // same relayUpgrade onto its own terminating server in mitm.js).
-  server.on('upgrade', (req, socket, head) => relayUpgrade(req, socket, head, upstream, sx));
+  server.on('upgrade', (req, socket, head) => {
+    // The same gate the request path applies. Without it this is a third egress
+    // path that authorises nobody (task-6, F-1).
+    if (!clientAuthorized(req, socket, proxyApiKey, { allowLoopbackClients: destinations.options.allowLoopbackClients })) {
+      try { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); } catch { /* gone */ }
+      try { socket.destroy(); } catch { /* gone */ }
+      return;
+    }
+    relayUpgrade(req, socket, head, upstream, sx);
+  });
 
   return server;
 }
@@ -723,7 +732,34 @@ function relayStream(req, res, upstream, sx) {
  * handshake (emits its own 'upgrade' event on a 101); once that fires it's
  * just two raw sockets spliced together.
  */
+/**
+ * Is this client allowed to use the proxy at all?
+ *
+ * The request path checked `x-api-key` inline and the CONNECT path had
+ * `connectAuthorized`; the **upgrade** path checked nothing, so a hosted
+ * listener answered an unauthenticated WebSocket handshake by dialling upstream
+ * on the client's behalf (task-6, F-1). Three egress paths, and NFR-20 covered
+ * two of them.
+ */
+export function clientAuthorized(req, socket, proxyApiKey, { allowLoopbackClients = true } = {}) {
+  if (!proxyApiKey) return true;
+  if (allowLoopbackClients && isLoopbackAddr(socket?.remoteAddress)) return true;
+  return safeKeyEqual(req?.headers?.['x-api-key'], proxyApiKey);
+}
+
 export function relayUpgrade(req, socket, head, upstream, sx) {
+  // F-2 — the target was built as `${upstream}${req.url}`, so an absolute-form
+  // request line produced a hostname like `api.anthropic.comhttp`. It failed to
+  // resolve rather than reaching anywhere, which is luck rather than a check.
+  // This relay only ever addresses the configured upstream; a path is the only
+  // thing it can legitimately be given.
+  if (typeof req?.url !== 'string' || !req.url.startsWith('/')) {
+    try {
+      socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    } catch { /* client already gone */ }
+    try { socket.destroy(); } catch { /* already gone */ }
+    return;
+  }
   const target = new URL(`${upstream}${req.url}`);
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {

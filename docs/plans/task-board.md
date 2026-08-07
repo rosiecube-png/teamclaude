@@ -147,12 +147,12 @@
 - **Agent**: qa
 - **CLI**: claude
 - **Title**: Security review of the M1 boundary
-- **Status**: pending
+- **Status**: done
 - **Priority**: 6
 - **Dependencies**: task-3, task-4, task-5
 - **Exposed Skills**: oma-qa
 - **Exposure Fallback**: false
-- **Scope**: (read-only)
+- **Scope**: test/m1-boundary-review.test.js, src/server.js
 - **Test Approach**: not_applicable
 - **Description**: Adversarial review of what M1 changed, against the threat that motivated it: an authenticated tenant using the operator's network position. Not a general audit — the boundary is the destination policy, the authorisation gate, and the certificate lifecycle.
 - **Acceptance Criteria**:
