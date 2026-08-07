@@ -365,3 +365,83 @@ function replaceBlock(text, replacement) {
 async function readIf(p) {
   try { return await readFile(p, 'utf8'); } catch { return null; }
 }
+
+/**
+ * Which of the two configuration locations are actually in place (FR-18.1).
+ *
+ * **This does not run at the proxy, and that is a measured decision rather than
+ * a convenience.** The requirement was written around F05: a pre-settings
+ * request (`/api/eval/*`) that only arrives when the shell export is present,
+ * making a session whose first contact came later identifiable as
+ * settings-only. Two controlled runs on client 2.1.224 — one shell-export only,
+ * one project-scope `settings.json` only, with the activity filter off so
+ * nothing was hidden — produced **identical** request sequences, and neither
+ * carried a single `/api/eval` or `/api/event_logging` request. The proxy
+ * cannot tell the two apart.
+ *
+ * Here both locations are readable, so nothing has to be inferred, and the case
+ * the spec called harder and most important — settings missing, so background
+ * agents never reach the proxy at all — is as visible as the other one.
+ */
+export async function checkEnrolment({
+  settingsPath = settingsPathDefault(),
+  rcPath = join(homedir(), '.bashrc'),
+  artifactDir = artifactDirDefault(),
+} = {}) {
+  const settingsText = await readIf(settingsPath);
+  let settingsEnv = {};
+  try { settingsEnv = JSON.parse(stripJsonComments(settingsText || '{}')).env || {}; } catch { settingsEnv = {}; }
+  const inSettings = MANAGED_KEYS.filter((k) => k in settingsEnv);
+
+  const rc = (await readIf(rcPath)) || '';
+  const shell = rc.includes(MARKER);
+
+  const artifacts = [];
+  for (const f of ['tenant-ca.pem', 'device.key']) {
+    if ((await readIf(join(artifactDir, f))) === null) artifacts.push(f);
+  }
+
+  const problems = [];
+  if (!inSettings.length) {
+    problems.push(`${settingsPath} has none of the proxy settings. Background agents read this ` +
+      'file and nothing else — without it their traffic reaches the API directly, and nothing ' +
+      'surfaces an error. Run: teamclaude enrol --proxy <url>');
+  } else if (inSettings.length < MANAGED_KEYS.length) {
+    const missing = MANAGED_KEYS.filter((k) => !inSettings.includes(k));
+    problems.push(`${settingsPath} is missing ${missing.join(', ')}. Re-run: teamclaude enrol --proxy <url>`);
+  }
+  if (!shell) {
+    problems.push(`${rcPath} has no teamclaude block. One request leaves before settings are ` +
+      'read, so only the shell export catches it. Run: teamclaude enrol --proxy <url>');
+  }
+  if (artifacts.length) {
+    problems.push(`${artifactDir} is missing ${artifacts.join(', ')}, which the settings point at. ` +
+      'Re-run: teamclaude enrol --proxy <url>');
+  }
+
+  return {
+    settingsPath, rcPath, artifactDir,
+    settings: { present: inSettings.length > 0, keys: inSettings },
+    shell: { present: shell },
+    artifacts: { missing: artifacts },
+    complete: problems.length === 0,
+    problems,
+  };
+}
+
+/**
+ * Drop `//` and block comments so the env block can be read.
+ *
+ * Only for reading — a merge never parses, precisely so comments survive.
+ * Strings are skipped as units: a `//` inside a URL is not a comment.
+ */
+function stripJsonComments(text) {
+  let out = '';
+  for (let i = 0; i < text.length;) {
+    if (text[i] === '"') { const e = endOfString(text, i); out += text.slice(i, e); i = e; continue; }
+    if (text[i] === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; continue; }
+    if (text[i] === '/' && text[i + 1] === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++; i += 2; continue; }
+    out += text[i++];
+  }
+  return out;
+}

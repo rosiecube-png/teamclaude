@@ -287,7 +287,7 @@ have put `R-8` in the repository twice meaning two different things.
 | **FR-15** | Remove or disable one account without disturbing the person's others | `disable`/`remove` |
 | **FR-16** | Distribute the enrolment artifacts (script, CA, device certificate) over an authenticated channel | FR-02 |
 | **FR-17** | Surface why a request failed — exhausted, refused, unreachable — so recovery does not need the operator | G-6 |
-| **FR-18** | Detect a client that reached the proxy through only one of the two configuration paths, and report it | ASM-13, F16 |
+| **FR-18** | Detect a machine configured through only one of the two locations, and report which is missing. **Reworded in task-5**: it read *detect a client that reached the proxy…*, which assumed a proxy-side signal that does not exist. Two controlled runs on client 2.1.224 — shell-export only, and project-scope `settings.json` only, with the activity filter off — produced identical request sequences at the proxy, and neither carried the `/api/eval/*` request F05 recorded. The check reads both locations on the machine instead, which also covers the case the spec called harder: settings missing, so background agents never reach the proxy at all | ASM-13, F16 |
 
 ### 4.2 Non-functional — NFR
 

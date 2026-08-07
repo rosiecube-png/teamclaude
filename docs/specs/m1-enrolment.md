@@ -117,17 +117,30 @@ server's. Deciding it now costs nothing and stops M2 from inheriting the weaker 
 
 ### 3.3 Detecting a broken configuration
 
-> **FR-18.1** The proxy MUST detect a client that reached it through only one of the two
-> configuration paths, and MUST report it.
+> **FR-18.1** A machine configured through only one of the two locations MUST be detectable,
+> and the report MUST name which location is missing and what it costs.
 
 ASM-13 is the risk: if one location is lost — an edited `settings.json`, a shell rc that
 stopped being sourced — traffic leaks silently and everything still appears to work.
 
-The signal is available without new plumbing: the pre-settings request (`/api/eval/*`)
-arrives **only** when the shell export is present. A session whose first contact is the
-post-settings burst was configured by `settings.json` alone. The inverse — settings
-missing — shows up as a background agent that never appears at all, which is harder, and
-is the case FR-18.1 most needs to catch.
+**This was written as a proxy-side signal and that does not exist.** The reasoning was
+that the pre-settings request (`/api/eval/*`) arrives only when the shell export is
+present, so a session whose first contact came later was `settings.json` alone. Measured on
+client 2.1.224, with the activity filter off so nothing was hidden:
+
+| Run | First requests |
+| --- | --- |
+| Shell export only | `GET /mcp-registry/v0/servers…` · `POST /v1/messages?beta=true` · … |
+| Project-scope `settings.json` only | `GET /mcp-registry/v0/servers…` · `POST /v1/messages?beta=true` · … |
+
+Identical, and **neither run contained a single `/api/eval` or `/api/event_logging`
+request**. The proxy cannot tell the two apart, so a requirement that it must is not
+implementable however it is built.
+
+The check runs on the machine, where both locations are readable and nothing has to be
+inferred — `teamclaude enrol --check`. That also reaches the case this spec called harder
+and most important: settings missing means background agents never contact the proxy at
+all, so no proxy-side signal could ever have existed for it.
 
 ---
 

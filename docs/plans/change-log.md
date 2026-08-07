@@ -424,6 +424,62 @@ enrolment succeeded when it never ran.
 
 ---
 
+## 2026-08-07 — task-5, a requirement that could not be built ([#19](../../issues/19))
+
+FR-18.1. The finding is the requirement itself.
+
+| | |
+| --- | --- |
+| Register | **FR-18 reworded** — it required the *proxy* to detect this, and the proxy cannot |
+| Spec | `m1-enrolment.md` §3.3 rewritten, with the two runs that settle it |
+| Plan | task-5 rewritten: description, scope and all five criteria; `status: done` |
+| Board | regenerated from the plan |
+| Contract | n/a — nothing crosses the wire |
+| Governance | n/a |
+| Issue | [#19](../../issues/19) |
+| Test | `test/partial-config.test.js`, 9 cases |
+| Docs | `teamclaude enrol --check` in `--help` |
+| Risks | n/a — ASM-13's risk is unchanged; what changed is where it is caught |
+
+### The signal FR-18.1 was built on does not exist
+
+The requirement rested on F05: a pre-settings request (`/api/eval/*`) that arrives only
+when the shell export is present, making a session whose first contact came later
+identifiable as `settings.json`-only.
+
+Two controlled runs on client 2.1.224, with `eventLogging: 'show'` so the activity filter
+hid nothing:
+
+| Run | First requests |
+| --- | --- |
+| Shell export only | `GET /mcp-registry/v0/servers…` · `POST /v1/messages?beta=true` · … |
+| Project-scope `settings.json` only | `GET /mcp-registry/v0/servers…` · `POST /v1/messages?beta=true` · … |
+
+Identical, and **neither contained a single `/api/eval` or `/api/event_logging` request.**
+
+The first attempt at this measurement was wrong and would have reached the same conclusion
+for the wrong reason: it read the request path from the activity hooks, which suppress
+`/api/event_logging` unless `eventLogging` is `show`. A second attempt recorded at the base
+server's socket and saw nothing at all, because a client using `HTTPS_PROXY` arrives by
+CONNECT and never touches that listener. Only the third setup was measuring the thing.
+
+### Where the check went instead
+
+`teamclaude enrol --check` reads both locations on the machine. Nothing is inferred, and it
+covers the case this spec called harder and most important — settings missing means
+background agents never contact the proxy, so no proxy-side signal could ever have existed
+for it. The report names the consequence, not just the absence: *background agents read
+this file and nothing else — without it their traffic reaches the API directly, and nothing
+surfaces an error.*
+
+### Reading a settings file the writer refuses to parse
+
+`mergeSettingsEnv` never parses, so comments survive a write. The check has to *read* the
+env block, so it strips comments first — skipping strings as units, because a `//` inside a
+proxy URL is not a comment. A mutation that removed the string handling failed four tests.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -470,6 +526,7 @@ cold. ISO 21500 wants both directions.
 | `src/enrol.js` | Exists at all ← FR-03 · text editing rather than parsing ← FR-03.3 and ASM-18 · module boundary ← S3 · settings env derived from the shell lines ← FR-03 wanting the two locations to agree |
 | `src/claude-env.js` | `host`/`scheme` ← FR-03.2 against a hosted proxy · `certPath`/`keyPath` ← FR-16.1, unused until [#6](../../issues/6) · still pure ← S3 |
 | `src/x509.js` (again) | `createCsr` ← FR-16.3 · verified with openssl ← hand-built DER checked by its own writer proves nothing |
+| `src/enrol.js` `checkEnrolment` | Exists at all ← FR-18.1 · on the machine rather than at the proxy ← two runs producing identical traffic · stripping comments to read ← the writer deliberately never parses |
 | `src/request-id.js` | Exists at all ← S2 and FR-17.3 · 8 hex rather than a UUID ← it is read aloud and typed back · separate from `reqId` ← that one is a display concern |
 | `src/server.js` `FAILURE_CLASSES` | Exists at all ← FR-17.1 · `actionable` splitting the table ← FR-17.2 against FR-17.3 · the message carrying everything ← ASM-29, measured · `upstream_error` and `egress_not_pinned` ← reading every site, not the contract |
 | `src/index.js` enrol/unenrol | Exist at all ← NFR-13.2 needing a command to document · the exit code ← `process.exit(0)` swallowing a usage failure |
