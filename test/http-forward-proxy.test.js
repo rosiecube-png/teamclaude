@@ -78,7 +78,9 @@ test('returns 502 (not a hang) when the target host is unreachable', async () =>
   // Port 1 is not listening → connection refused.
   const r = await proxyRequest({ proxyPort, absoluteUrl: 'http://127.0.0.1:1/' });
   assert.equal(r.status, 502);
-  assert.match(r.body, /proxy_error/);
+  // FR-17.1: the generic class is gone, and this is specifically the upstream
+  // being unreachable rather than a fault inside the proxy.
+  assert.match(r.body, /upstream_unreachable/);
 
   proxy.close();
 });

@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
 import { createDestinationPolicy, connectPolicyDefaults, pinnedLookup } from './destination-policy.js';
+import { newCorrelationId } from './request-id.js';
 import { patchAccountUuid } from './account-uuid-rewrite.js';
 import { sanitizeToolPairs } from './tool-pair-sanitize.js';
 import { parseRequestModel, parseAdvisorModel } from './account-manager.js';
@@ -277,9 +278,105 @@ export function resolveAccountPin(accountManager, token) {
 // client's own headers — no account selection, no token injection,
 // content-encoding passed through (a transparent forward proxy). Anthropic is
 // HTTPS-only, so in practice this only ever sees third-party hosts.
-// A refusal reason, as the error envelope names it. The three are one-to-one
-// with what the destination policy can return; a fourth would reach a client as
-// something the contract does not describe.
+/**
+ * Every failure the proxy originates, and what the user is told (FR-17.1).
+ *
+ * Four unrelated situations used to share `proxy_error` with one of two
+ * messages — the upstream being unreachable, a fault inside the proxy, an
+ * upstream error passed along, and a credential being refused — which is the
+ * generic proxy error FR-17.1 exists to remove.
+ *
+ * The **message** carries the whole story, and that is measured rather than
+ * stylistic: the client prints `message` verbatim and shows no sign of
+ * `error.type` (ASM-29). The type is for the operator and the logs.
+ *
+ * `actionable` decides which half of the contract applies. Something the user
+ * can change gets the concrete step (FR-17.2); something they cannot gets an
+ * identifier the operator can find in the log (FR-17.3). Sending someone to the
+ * operator for a problem they could have fixed themselves is the failure this
+ * distinction exists to avoid.
+ */
+export const FAILURE_CLASSES = {
+  upstream_unreachable: {
+    type: 'upstream_unreachable', status: 502, actionable: false,
+    message: ({ detail, correlationId }) =>
+      `teamclaude could not reach the upstream API${detail ? ` (${detail})` : ''}. ` +
+      `Nothing on this machine changes that — retry shortly. Reference: ${correlationId}.`,
+  },
+  upstream_error: {
+    type: 'upstream_error', status: 502, actionable: false,
+    message: ({ detail, correlationId }) =>
+      `The upstream API failed in a way teamclaude could not recover from` +
+      `${detail ? `: ${detail}` : ''}. Retry shortly. Reference: ${correlationId}.`,
+  },
+  proxy_internal_error: {
+    type: 'proxy_internal_error', status: 502, actionable: false,
+    message: ({ correlationId }) =>
+      'teamclaude failed while handling this request. Retry shortly; if it keeps happening, ' +
+      `the operator will need this. Reference: ${correlationId}.`,
+  },
+  credential_refused: {
+    type: 'credential_refused', status: 502, actionable: true,
+    message: ({ account }) =>
+      `Upstream refused the credential for account ${account} (403). ` +
+      'Check the account, then re-add it with: teamclaude login.',
+  },
+  destination_not_allowed: {
+    type: 'destination_not_allowed', status: 400, actionable: true,
+    message: ({ detail }) =>
+      `teamclaude refused this destination: ${detail}. ` +
+      'Add the host to proxy.connect.allow if it should be reachable.',
+  },
+  destination_address_blocked: {
+    type: 'destination_address_blocked', status: 400, actionable: true,
+    message: ({ detail }) =>
+      `teamclaude refused this destination: ${detail}. ` +
+      'Set proxy.connect.allowPrivateAddresses if reaching it is intended.',
+  },
+  egress_not_pinned: {
+    type: 'egress_not_pinned', status: 503, actionable: true,
+    headers: { 'retry-after': '30' },
+    message: ({ ip, expected }) =>
+      `Egress is ${ip || 'unknown'}, not the pinned ${(expected || ['(none)']).join(', ')} — ` +
+      'not sending this request. Check the VPN.',
+  },
+  destination_port_not_allowed: {
+    type: 'destination_port_not_allowed', status: 400, actionable: true,
+    message: ({ detail }) =>
+      `teamclaude refused this destination: ${detail}. ` +
+      'Set proxy.connect.restrictPorts to false if other ports are intended.',
+  },
+};
+
+/** The envelope for a failure class — the shape clients already parse. */
+export function describeFailure(key, vars = {}) {
+  const cls = FAILURE_CLASSES[key];
+  if (!cls) throw new Error(`no failure class ${key}`);
+  return { type: 'error', error: { type: cls.type, message: cls.message(vars) } };
+}
+
+/**
+ * Answer with a failure class, logging it under the same id the user is given.
+ *
+ * The id is generated here rather than by the caller so it cannot be forgotten
+ * on the path that needs it most — a fault the user cannot act on.
+ */
+function failWith(res, key, vars = {}) {
+  const cls = FAILURE_CLASSES[key];
+  const correlationId = cls.actionable ? null : (vars.correlationId || newCorrelationId());
+  const body = describeFailure(key, { ...vars, correlationId });
+  if (correlationId) {
+    console.error(`[TeamClaude] [${correlationId}] ${cls.type}: ${vars.detail || body.error.message}`);
+  }
+  if (!res.headersSent) {
+    res.writeHead(cls.status, { 'Content-Type': 'application/json', ...(cls.headers || {}) });
+    res.end(JSON.stringify(body));
+  }
+  return correlationId;
+}
+
+// The destination policy's three reasons, one-to-one with a failure class. A
+// fourth would reach a client as something the contract does not describe.
 const REFUSAL_TYPE = {
   not_allowed: 'destination_not_allowed',
   address_blocked: 'destination_address_blocked',
@@ -345,11 +442,7 @@ export async function relayHttpForward(req, res, policy = null) {
     upstreamRes.pipe(res);
   });
   upstreamReq.on('error', (err) => {
-    console.error(`[TeamClaude] HTTP forward to ${target.host} failed:`, err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Upstream unreachable' } }));
-    }
+    failWith(res, 'upstream_unreachable', { detail: `${target.host}: ${err.message}` });
   });
   res.on('close', () => upstreamReq.destroy());
   if (['GET', 'HEAD'].includes(req.method)) upstreamReq.end();
@@ -426,14 +519,7 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
         const state = await egress.waitUntilPinned({ isAborted: () => res.destroyed });
         if (res.destroyed) return;
         if (!state.ok) {
-          res.writeHead(503, { 'Content-Type': 'application/json', 'retry-after': '30' });
-          res.end(JSON.stringify({
-            type: 'error',
-            error: {
-              type: 'proxy_error',
-              message: `Egress is ${state.ip || 'unknown'}, not the pinned ${state.expected.join(', ')} — not sending this request. Check the VPN.`,
-            },
-          }));
+            failWith(res, 'egress_not_pinned', { ip: state.ip, expected: state.expected });
           return;
         }
       }
@@ -558,11 +644,7 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
         await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir, sx);
       } catch (err) {
         ctx.status = ctx.status || 502;
-        console.error('[TeamClaude] Unhandled error:', err);
-        if (!res.headersSent) {
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Internal proxy error' } }));
-        }
+        failWith(res, 'proxy_internal_error', { detail: err.stack || err.message });
       } finally {
         accountManager.endSession(sessionId);
         if (!hideActivity) hooks.onRequestEnd?.(reqId, { method: req.method, path: req.url, account: ctx.account, status: ctx.status, model: ctx.model, sessionId, pinned: ctx.pinnedIndex != null });
@@ -621,10 +703,7 @@ function relayStream(req, res, upstream, sx) {
 
   upstreamReq.on('error', (err) => {
     console.error('[TeamClaude] Remote Control relay error:', err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Upstream unreachable' } }));
-    }
+    failWith(res, 'upstream_unreachable', { detail: `Remote Control relay: ${err.message}` });
   });
   // Client disconnected (e.g. Claude Code closed the channel): tear down the
   // upstream side too instead of leaking an open connection.
@@ -729,10 +808,7 @@ async function relayRaw(req, res, upstream, sx) {
     res.end(responseBody);
   } catch (err) {
     console.error('[TeamClaude] Raw relay error:', err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Upstream unreachable' } }));
-    }
+    failWith(res, 'upstream_unreachable', { detail: `raw relay: ${err.message}` });
   }
 }
 
@@ -814,11 +890,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       ctx.status = 502;
       ctx.account = `(${[...rejected].join(', ')} refused)`;
       if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          type: 'error',
-          error: { type: 'proxy_error', message: `Upstream refused the credential for account ${names} (403). Check the account, then re-add it with: teamclaude login` },
-        }));
+        failWith(res, 'credential_refused', { account: names });
       }
       return;
     }
@@ -1193,11 +1265,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     ctx.status = 502;
 
     if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        type: 'error',
-        error: { type: 'proxy_error', message: `Upstream error: ${err.message}` },
-      }));
+      failWith(res, 'upstream_error', { detail: err.message });
     } else if (!res.writableEnded) {
       // Error after headers were already sent (mid-stream) and it wasn't
       // classified transient: we can't send a status or fail over, and

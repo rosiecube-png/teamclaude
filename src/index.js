@@ -78,6 +78,18 @@ switch (command) {
     aliasCommand();
     process.exit(0);
     break;
+  // These two report usage errors through process.exitCode, so exiting with a
+  // hard 0 would tell a script the enrolment succeeded when it never ran.
+  case 'enrol':
+  case 'enroll':
+    await enrolCommand(args.slice(1));
+    process.exit(process.exitCode ?? 0);
+    break;
+  case 'unenrol':
+  case 'unenroll':
+    await unenrolCommand();
+    process.exit(process.exitCode ?? 0);
+    break;
   case 'service':
     await serviceCommand();
     process.exit(0);
@@ -995,6 +1007,46 @@ async function apiCommand() {
 
 // ── alias ───────────────────────────────────────────────────
 
+/**
+ * Point this machine at a hosted proxy (#19).
+ *
+ * Both locations, always: 9 of 9 observed request paths were captured with the
+ * shell export and user-scope settings together, and project scope silently
+ * misses background agents.
+ */
+async function enrolCommand(argv) {
+  const at = argv.indexOf('--proxy');
+  const proxyUrl = at >= 0 ? argv[at + 1] : null;
+  if (!proxyUrl) {
+    console.error('Usage: teamclaude enrol --proxy https://proxy.example:8443');
+    process.exitCode = 1;
+    return;
+  }
+  try { new URL(proxyUrl); } catch {
+    console.error(`Not a URL: ${proxyUrl}`);
+    process.exitCode = 1;
+    return;
+  }
+  const { enrol } = await import('./enrol.js');
+  const out = await enrol({ proxyUrl });
+  console.log(`Enrolled against ${proxyUrl}`);
+  console.log(`  settings: ${out.settingsPath}`);
+  console.log(`  shell:    ${out.rcPath}`);
+  console.log(`  device:   ${out.keyPath} (private key, generated here and never sent)`);
+  console.log('');
+  console.log('Open a new terminal, or source your shell rc, for the export to take effect.');
+  console.log('Undo any time with: teamclaude unenrol');
+}
+
+/** Undo enrolment, leaving the machine reaching the upstream directly (NFR-13.2). */
+async function unenrolCommand() {
+  const { unenrol, settingsPathDefault } = await import('./enrol.js');
+  await unenrol();
+  console.log('Unenrolled. This machine reaches the API directly again.');
+  console.log(`  ${settingsPathDefault()} — the env block teamclaude added is gone`);
+  console.log('Open a new terminal so the old shell export is no longer set.');
+}
+
 function aliasCommand() {
   const shell = argValue('--shell') || undefined;
   if (args.includes('--uninstall')) {
@@ -1373,6 +1425,12 @@ Commands:
                       the session to one account (see Environment below)
   alias               Print a shell alias so plain 'claude' routes via the proxy
                       (--install to write it to your shell rc; --uninstall to remove)
+  enrol --proxy <url> Point this machine at a hosted proxy: writes the env block to
+                      ~/.claude/settings.json AND a shell export, because the two
+                      cover different windows -- one request leaves before settings
+                      are read, and settings are what background agents honour
+  unenrol             Undo it. This is the recovery step when the service is
+                      unreachable: it leaves the machine reaching the API directly
   service <sub>       Run the proxy as a user service that starts at login and
                       restarts on its own: install | uninstall | status | print
                       (LaunchAgent on macOS, systemd --user unit on Linux;

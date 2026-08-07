@@ -65,6 +65,11 @@ and it exists only as an implication.
 
 ---
 
+> **Built.** FR-17.1, FR-17.2, FR-17.3 and NFR-13.2 shipped in task-4. `proxy_error` no
+> longer appears in `src/server.js`; `FAILURE_CLASSES` holds one entry per situation, each
+> saying whether the user can act on it. Two classes the contract did not name were found by
+> reading every site: `upstream_error` and `egress_not_pinned`.
+
 ## 3. Requirements
 
 ### 3.1 Legible failure

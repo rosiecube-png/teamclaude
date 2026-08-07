@@ -112,6 +112,39 @@ teamclaude help              # Show all commands
 
 ![teamclaude status output](assets/status-redacted.png)
 
+## When the proxy is not reachable
+
+If your machine is enrolled against a hosted proxy and that proxy is down, Claude Code cannot reach the API — the failure is a transport error the proxy never saw, so it cannot explain itself. The recovery does not depend on anyone being awake:
+
+```bash
+teamclaude unenrol
+```
+
+That removes the `env` block enrolment added to `~/.claude/settings.json`, the marked block in your shell rc, and the certificate files. What is left reaches the upstream directly, as it did before enrolling.
+
+**It does not have to be done perfectly.** A partial removal degrades safely, which was measured: with the proxy gone and `NODE_EXTRA_CA_CERTS` still pointing at a deleted file, the client warned `Ignoring extra certs … load failed` and carried on. Deleting the certificate files by hand and reopening a terminal is enough if the command itself is unavailable.
+
+Re-enrol with `teamclaude enrol --proxy <url>` when the service is back.
+
+## What a proxy error is telling you
+
+Failures the proxy originates carry a distinct `error.type`, but **the message is the part you see** — the client prints it verbatim and does not show the type. So the message says the whole thing:
+
+| You can act on it | The message names the step |
+| --- | --- |
+| `credential_refused` | which account, and `teamclaude login` to re-add it |
+| `destination_not_allowed` | the host, and the `proxy.connect.allow` entry that would permit it |
+| `destination_address_blocked` | the address it resolved to, and the setting that would permit it |
+| `egress_not_pinned` | the egress address seen against the pinned one |
+
+| You cannot | The message carries a reference |
+| --- | --- |
+| `upstream_unreachable` | the upstream could not be reached |
+| `upstream_error` | the upstream failed in a way the proxy could not recover from |
+| `proxy_internal_error` | a fault inside the proxy |
+
+The second group ends with `Reference: 7f3a9c21.` — eight hex characters that also appear in the server log for that request. Quoting it to whoever runs the proxy turns "it broke" into something they can look up.
+
 ## Auto-update
 
 When TeamClaude is installed globally via npm, it self-updates in the background: it checks the npm registry at most once a day, and when a newer version is published it runs `npm install -g @karpeleslab/teamclaude@latest` and applies it on the next launch. The check runs after a `teamclaude run` session ends and when a headless server starts. A git checkout is never touched — update that with `git pull`. Run `teamclaude update` to update on demand.

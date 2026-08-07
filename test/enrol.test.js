@@ -333,3 +333,28 @@ test('MANAGED_KEYS is exactly what enrolment writes, so unenrol removes exactly 
       'a key is written that unenrol does not know to remove, or the reverse');
   } finally { s.drop(); }
 });
+
+// ── the CLI surface ─────────────────────────────────────────────────────────
+
+test('the CLI reports a usage error with a non-zero exit code', async () => {
+  // `process.exit(0)` after setting process.exitCode would tell a script the
+  // enrolment succeeded when it never ran.
+  const { execFileSync } = await import('node:child_process');
+  for (const argv of [['enrol'], ['enrol', '--proxy', 'not a url']]) {
+    let code = 0;
+    try {
+      execFileSync(process.execPath, ['src/index.js', ...argv], { stdio: 'pipe' });
+    } catch (err) { code = err.status; }
+    assert.equal(code, 1, `teamclaude ${argv.join(' ')} exited 0`);
+  }
+});
+
+test('unenrol is reachable under both spellings, and enrol is too', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync('src/index.js', 'utf8');
+  for (const c of ["case 'enrol'", "case 'enroll'", "case 'unenrol'", "case 'unenroll'"]) {
+    assert.ok(src.includes(c), `${c} is not dispatched`);
+  }
+  assert.match(src, /unenrol\s+Undo it\. This is the recovery step/,
+    'NFR-13.2 wants unenrol documented as the recovery step, including in --help');
+});
