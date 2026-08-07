@@ -425,27 +425,37 @@
     },
     "iso_31000": {
       "top_risks": [
-        "RSK-03 — a client release moves the behaviour this design rests on (H/H); F03 and F06 each caught it moving",
-        "RSK-04 — the upstream response contract changes and quota tracking degrades silently (M/H); UNTREATED, and nothing watches for it",
-        "RSK-02 — the allowlist refuses a host a real session needs (M/M); composed from -p and --bg observations only",
-        "RSK-07 — an operator deliberately opens a hardening switch (L/M); defaults guard omission, not intent",
-        "RSK-01 — limits key on the egress IP, so pooling yields no multiple (M/H); observable once M1 runs"
+        "RSK-03 (H/H) — a client release moves the behaviour this design rests on; the canary must watch the SDK version and the dated beta list too (ASM-40), and a detected change may not be deployable without a restart until NFR-17.5 lands (ASM-15)",
+        "RSK-04 (M/H) — the upstream response contract changes and quota tracking degrades silently; treatment now scheduled as #30",
+        "RSK-06 (L/H) — plaintext prompts in server memory are disclosed; unavoidable while TLS terminates in the cloud (CON-02)",
+        "RSK-05 (L/H) — credential custody read as prohibited under the consumer terms; the interpretation is not the operator to make",
+        "RSK-01 (M/H) — limits key on the egress IP, so pooling yields no multiple; observable once M1 runs",
+        "RSK-02 (M/M) — the allowlist refuses a host a real session needs; composed from -p and --bg observations only",
+        "RSK-08 (H/M) — donations do not cover KMS, dedicated egress and on-call; this is the M4 gate, not a risk to mitigate away",
+        "RSK-07 (L/M) — an operator deliberately opens a hardening switch; defaults guard omission, not intent"
       ],
       "treatments": [
-        "RSK-03 — NFR-10 canary before adopting a release as the floor; NFR-22 isolates the tracking code",
-        "RSK-04 — none in M1. Closing it means building the watch, which belongs with the canary in #16",
+        "RSK-03 — NFR-10 canary widened per ASM-40; NFR-22 isolates the tracking code; NFR-17.5 makes a fix deployable",
+        "RSK-04 — #30, folded into the same canary",
+        "RSK-06 — NFR-05 logging off by default, NFR-15 incident process, short retention",
+        "RSK-05 — self-hostable build, explicit consent, NFR-11 audit; legal review advisory",
+        "RSK-01 — egress.pin and sx.mode already exist; residual is metered bandwidth against donations",
         "RSK-02 — FR-07.5 composes the allowlist by running a client and recording refusals",
-        "RSK-07 — defaults derive from proxy.host so the unsafe state needs intent (NFR-20)",
-        "RSK-01 — egress.pin and sx.mode already exist; residual is metered bandwidth against donations (CON-08)"
+        "RSK-08 — scope M4 to what a volunteer can carry, or do not offer hosting",
+        "RSK-07 — defaults derive from proxy.host so the unsafe state needs intent (NFR-20)"
       ],
       "register": "docs/saas-requirements.md §10 — RSK-01 … RSK-08, rated with owner and residual"
     },
     "iso_38500": {
       "decision_owner": "repository owner",
       "approval_required_for": [
-        "The composed allowlist (FR-07.5) — it decides what a client can still reach",
-        "Any deviation from a spec requirement; the spec is corrected first, not the code silently",
-        "Certificate lifetimes were listed here in error and removed: a leaf swap needs no client action (ASM-16, verified), so nothing competes with a short lifetime. 90/30 follows from NFR-17.5 rather than from preference."
+        "The composed allowlist (FR-07.5) — it decides what a client can still reach, and ASM-19/20/21 leave its shape open",
+        "Any deviation from a spec requirement; the spec is corrected first, never the code silently",
+        "Whether NFR-17.5 (invalidate the certificate memos) ships in M1 or is deferred — without it a shorter lifetime is worse than none (ASM-15), so it is not an implementation detail",
+        "Whether the community-hosted mode is offered at all — the M4 gate. Its inputs changed: RSK-04 now has a scheduled treatment (#30), and the RSK-03 canary must widen to the SDK version and the dated beta list (ASM-40)"
+      ],
+      "removed_from_approval": [
+        "Certificate lifetimes (NFR-17.4) — a leaf swap needs no client action (ASM-16, verified), so nothing competes with a short lifetime; 90/30 follows from NFR-17.5"
       ]
     }
   },
