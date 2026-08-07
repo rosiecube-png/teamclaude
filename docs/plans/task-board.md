@@ -129,7 +129,7 @@
 - **Dependencies**: task-2, task-3, task-4
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/enrol.js, src/index.js, test/partial-config.test.js
+- **Scope**: src/enrol.js, src/index.js, test/partial-config.test.js, src/mitm.js, test/cert-concurrency.test.js
 - **Test Approach**: tdd (unit)
 - **Description**: FR-18.1 was written around a proxy-side signal (F05's pre-settings /api/eval request) that does not exist on client 2.1.224: two controlled runs, shell-export only and project-scope settings only, produced identical request sequences with no /api/eval at all. The check reads both locations on the machine instead.
 - **Acceptance Criteria**:
@@ -138,6 +138,7 @@
     - Proxy-side detection is documented as impossible, with the measurement: a shell-only and a settings-only client send identical traffic
     - No false positive for a correctly enrolled client
     - The report names what each missing location costs, not just that it is missing
+    - ASM-30 — concurrent processes do not leave an incoherent chain on disk, and ensureCerts throws nothing while another process is writing
   - FR-18.1 — a session that first appears after settings load is reported as partially configured, naming the missing location
   - The report is visible without reading logs — activity stream or status endpoint
   - The inverse case (settings missing, shell present) is documented as not detectable proxy-side, with the reason

@@ -293,17 +293,22 @@
         "The report is visible without reading logs — teamclaude enrol --check, exiting non-zero when something is missing",
         "Proxy-side detection is documented as impossible, with the measurement: a shell-only and a settings-only client send identical traffic",
         "No false positive for a correctly enrolled client",
-        "The report names what each missing location costs, not just that it is missing"
+        "The report names what each missing location costs, not just that it is missing",
+        "ASM-30 — concurrent processes do not leave an incoherent chain on disk, and ensureCerts throws nothing while another process is writing"
       ],
       "artifacts_expected": [
         "src/enrol.js",
         "src/index.js",
-        "test/partial-config.test.js"
+        "test/partial-config.test.js",
+        "src/mitm.js",
+        "test/cert-concurrency.test.js"
       ],
       "scope": [
         "src/enrol.js",
         "src/index.js",
-        "test/partial-config.test.js"
+        "test/partial-config.test.js",
+        "src/mitm.js",
+        "test/cert-concurrency.test.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
