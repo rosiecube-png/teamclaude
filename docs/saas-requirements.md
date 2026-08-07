@@ -9,8 +9,8 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Requirements | 17 functional, 19 non-functional — §4.1, §4.2 |
-| Assumptions | 13 — 6 verified, 6 unverified, 1 known false — §4.3 |
+| Requirements | 17 functional, 21 non-functional — §4.1, §4.2 |
+| Assumptions | 14 — 6 verified, 7 unverified, 1 known false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Measured findings | 18 — §2 |
 | Backlog | 1 — egress IP, §5 |
@@ -228,6 +228,8 @@ says which of these already exist in the codebase.
 | **NFR-17** | Rotate the secrets the design creates — proxy keys, device certificates, the tenant CA — with a defined lifetime and a revocation path | NFR-03 |
 | **NFR-18** | Declare where tokens and logs are stored, and keep them there | §7, community-hosted only |
 | **NFR-19** | Protect the dashboard itself: session handling, and rate limiting on enrolment and login | FR-13 |
+| **NFR-20** | Authenticate every client that is not on loopback, and fail **closed** when no credential is configured | `connectAuthorized` fails open today — `src/mitm.js:294` |
+| **NFR-21** | Constrain where the proxy may open a connection: refuse loopback, link-local and private addresses, restrict the port, and connect to the address that was checked | nothing filters today — `src/mitm.js:197`, `src/server.js:247` |
 
 ### 4.3 Assumptions — ASM
 
@@ -248,6 +250,7 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-11** | The upstream's response contract is stable | ❌ **unverified** — quota tracking parses `anthropic-ratelimit-unified-*`. If those headers change, rotation degrades **silently**. The server-side twin of ASM-10, and nothing watches for it |
 | **ASM-12** | Headless token refresh keeps working without user interaction | ❌ **unverified** — re-login prompts are already reported in ordinary use |
 | **ASM-13** | Enrolment leaves both configuration locations in place | ❌ **unverified** — FR-03 needs both; if one is lost the leak is silent (F16). Nothing detects the half-configured state |
+| **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
 
 ### 4.4 Constraints — CON
 
