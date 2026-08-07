@@ -474,6 +474,10 @@ control plane.
 | CONNECT destination allowlist, address policy, and a listener that fails closed | FR-07, NFR-20, NFR-21 | [#8](../../issues/8) | [hardening](specs/m1-hardening.md) |
 | Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) | [failure modes](specs/m1-failure-modes.md) |
 | Renew MITM certificates on age, not only on host mismatch | NFR-17 | [#21](../../issues/21) | [certificates](specs/m1-certificates.md) |
+| Boundary values exercised wherever a requirement classifies a range | NFR-26 | [#8](../../issues/8) | [hardening](specs/m1-hardening.md) |
+| A review finding carries a severity and gates the milestone | NFR-27 | [#8](../../issues/8) | — |
+| SSE responses survive the edge — no idle timeout below the client's watchdogs | NFR-07 | [#8](../../issues/8) | — |
+| The measured latency headroom is not spent — address resolution must not add a lookup per request | NFR-06 | [#8](../../issues/8) | — |
 
 Each row has a spec in [`docs/specs/`](specs/) decomposing its register entries into
 numbered, testable sub-requirements. Every claim in those specs about current behaviour
@@ -504,6 +508,8 @@ The point at which it can hold someone else's credentials at all.
 | Device certificates, issued and revocable; mTLS enforced on the rotation path | FR-02, NFR-02 | [#6](../../issues/6) |
 | Per-tenant CA with the key in a KMS | FR-04, NFR-03 | [#5](../../issues/5) |
 | Envelope-encrypted tokens; audit every credential access | NFR-04, NFR-11 | [#5](../../issues/5) |
+| Request-body logging off by default; encrypted and short-lived when on | NFR-05 | [#5](../../issues/5) |
+| Keep the client-tracking code isolated and independently testable | NFR-22 | [#16](../../issues/16) |
 | Minimum client version, and a canary on each release | FR-10, NFR-10 | [#16](../../issues/16) |
 | Watch the upstream response contract | ASM-11 | — |
 
@@ -525,10 +531,10 @@ Not features — the things that make it defensible to run for anyone but yourse
 
 | | Requirement | Tracked |
 | --- | --- | --- |
-| Stated availability posture; backup and a rehearsed restore | NFR-12, NFR-14 | [#22](../../issues/22) |
+| Stated availability posture; recovery objectives; backup and a rehearsed restore | NFR-12, NFR-14, NFR-23 | [#22](../../issues/22) |
 | Fair-share between tenants | NFR-16 | [#23](../../issues/23) |
 | Secret rotation and revocation | NFR-17 | [#24](../../issues/24) |
-| Incident process; declared data residency | NFR-15, NFR-18 | [#25](../../issues/25) |
+| Incident process; declared data residency; third parties identified; threat model maintained | NFR-15, NFR-18, NFR-24, NFR-25 | [#25](../../issues/25) |
 | Per-tenant egress | NFR-08 | — |
 | Rewrite the compliance documentation | CON-06 | — |
 
