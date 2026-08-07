@@ -9,7 +9,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Requirements | 17 functional, 21 non-functional — §4.1, §4.2 |
+| Requirements | 18 functional, 21 non-functional — §4.1, §4.2 |
 | Assumptions | 14 — 6 verified, 7 unverified, 1 known false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Measured findings | 18 — §2 |
@@ -204,6 +204,7 @@ says which of these already exist in the codebase.
 | **FR-15** | Remove or disable one account without disturbing the person's others | `disable`/`remove` |
 | **FR-16** | Distribute the enrolment artifacts (script, CA, device certificate) over an authenticated channel | FR-02 |
 | **FR-17** | Surface why a request failed — exhausted, refused, unreachable — so recovery does not need the operator | G-6 |
+| **FR-18** | Detect a client that reached the proxy through only one of the two configuration paths, and report it | ASM-13, F16 |
 
 ### 4.2 Non-functional — NFR
 
@@ -375,12 +376,16 @@ Fixes that stand on their own, independent of any hosting plan.
 Run it on your own host; reach it from your own machines. One operator, own accounts, no
 control plane.
 
-| | Requirement | Tracked |
-| --- | --- | --- |
-| Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16 | [#19](../../issues/19) |
-| CONNECT destination allowlist; drop the test-host intercept; make the loopback exemption disableable | FR-07 | [#8](../../issues/8) |
-| Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) |
-| Renew MITM certificates on age, not only on host mismatch | NFR-17 | [#21](../../issues/21) |
+| | Requirement | Tracked | Spec |
+| --- | --- | --- | --- |
+| Enrolment writes **both** config locations, and ships the artifacts | FR-03, FR-16, FR-18 | [#19](../../issues/19) | [enrolment](specs/m1-enrolment.md) |
+| CONNECT destination allowlist, address policy, and a listener that fails closed | FR-07, NFR-20, NFR-21 | [#8](../../issues/8) | [hardening](specs/m1-hardening.md) |
+| Failures are legible, and removing the config restores direct operation | FR-17, NFR-13 | [#20](../../issues/20) | [failure modes](specs/m1-failure-modes.md) |
+| Renew MITM certificates on age, not only on host mismatch | NFR-17 | [#21](../../issues/21) | [certificates](specs/m1-certificates.md) |
+
+Each row has a spec in [`docs/specs/`](specs/) decomposing its register entries into
+numbered, testable sub-requirements. Every claim in those specs about current behaviour
+cites a source line, and the citations are checked against the files.
 
 [#21](../../issues/21) is a defect in the current proxy, found while verifying NFR-17:
 `leafCovers()` checks the signature and the SANs but never the validity dates, so an
