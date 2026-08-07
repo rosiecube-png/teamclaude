@@ -365,6 +365,65 @@ it.
 
 ---
 
+## 2026-08-07 — task-4, legible failure ([#20](../../issues/20))
+
+FR-17.1, FR-17.2, FR-17.3, NFR-13.2.
+
+| | |
+| --- | --- |
+| Register | ASM-29 already measured; this is what was built on it |
+| Contract | `m1-error-envelope.md` — emitted as written, plus two classes it did not name |
+| Spec | `m1-failure-modes.md` — marked built |
+| Plan | task-4 `status: done`; scope gained `src/request-id.js` and `src/index.js` |
+| Board | regenerated |
+| Governance | n/a |
+| Issue | [#20](../../issues/20) |
+| Test | `test/failure-modes.test.js`, 9 cases; `test/enrol.test.js` gained the CLI surface |
+| Docs | `docs/usage.md` — **When the proxy is not reachable** and **What a proxy error is telling you** |
+| Risks | n/a |
+
+### An acceptance criterion that could not be met as written
+
+Criterion 5 is *existing 403, 429 and pin tests still pass unchanged*. Two of them assert
+`/proxy_error/` — the exact string FR-17.1 exists to remove. The two cannot both hold.
+
+Read as intended, the criterion protects the **behaviour** those tests cover: the status,
+the account being named, no extra retries. All of that is unchanged. Two assertions were
+repointed at the class that replaced the generic one, and nothing else in either file moved.
+
+### Two classes the contract did not name
+
+The contract enumerated six. Reading every site turned up two more the same argument
+applies to:
+
+| | |
+| --- | --- |
+| `upstream_error` | an upstream failure passed along. Distinct from *unreachable* — something answered |
+| `egress_not_pinned` | the egress address is not the pinned one. Already had a good message; it was wearing `proxy_error` |
+
+`proxy_error` no longer appears in `src/server.js` at all.
+
+### The documentation named a command that did not exist
+
+NFR-13.2 wants `unenrol` documented as the recovery step. task-2 built the module and
+nothing invoked it — writing the sentence is what surfaced that. `teamclaude enrol
+--proxy <url>` and `teamclaude unenrol` are dispatched now, and in `--help`.
+
+Wiring them turned up one more: the dispatch ends `process.exit(0)`, which overwrote the
+`process.exitCode = 1` a usage error had just set. A script would have been told the
+enrolment succeeded when it never ran.
+
+### The mutations
+
+| Reverted to | Caught by |
+| --- | --- |
+| The id reaches the user but never the log | *the id in the response is the id in the log* |
+| Every class treated as actionable, so none carries an id | the same |
+| Upstream-unreachable back to the generic class | *every failure class has its own type* |
+| The id as a field instead of appended to the message | *the envelope shape clients parse is unchanged* |
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -411,6 +470,9 @@ cold. ISO 21500 wants both directions.
 | `src/enrol.js` | Exists at all ← FR-03 · text editing rather than parsing ← FR-03.3 and ASM-18 · module boundary ← S3 · settings env derived from the shell lines ← FR-03 wanting the two locations to agree |
 | `src/claude-env.js` | `host`/`scheme` ← FR-03.2 against a hosted proxy · `certPath`/`keyPath` ← FR-16.1, unused until [#6](../../issues/6) · still pure ← S3 |
 | `src/x509.js` (again) | `createCsr` ← FR-16.3 · verified with openssl ← hand-built DER checked by its own writer proves nothing |
+| `src/request-id.js` | Exists at all ← S2 and FR-17.3 · 8 hex rather than a UUID ← it is read aloud and typed back · separate from `reqId` ← that one is a display concern |
+| `src/server.js` `FAILURE_CLASSES` | Exists at all ← FR-17.1 · `actionable` splitting the table ← FR-17.2 against FR-17.3 · the message carrying everything ← ASM-29, measured · `upstream_error` and `egress_not_pinned` ← reading every site, not the contract |
+| `src/index.js` enrol/unenrol | Exist at all ← NFR-13.2 needing a command to document · the exit code ← `process.exit(0)` swallowing a usage failure |
 | `src/destination-policy.js` | Exists at all ← S1 · the verdict carrying the address ← NFR-21.2 · the enumerated range list ← NFR-21.6 and ASM-19 · every default derived from `proxy.host` ← criterion 13 and three failing blind-tunnel tests · `SHIPPED_ALLOW` ← FR-07.5, measured · `pinnedLookup` ← a v6/v4 fallback regression |
 | `test/requirements-coverage.test.js` (again) | *a task owns the files its criteria name* ← task-1's scope defect · the overlap guard skipping done tasks ← task-2 needing a file task-1 had finished with |
 

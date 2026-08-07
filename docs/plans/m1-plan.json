@@ -254,12 +254,16 @@
       "artifacts_expected": [
         "src/server.js",
         "test/failure-modes.test.js",
-        "docs/usage.md"
+        "docs/usage.md",
+        "src/request-id.js",
+        "src/index.js"
       ],
       "scope": [
         "src/server.js",
         "test/failure-modes.test.js",
-        "docs/usage.md"
+        "docs/usage.md",
+        "src/request-id.js",
+        "src/index.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
@@ -268,7 +272,7 @@
       "tdd_evidence_required": true,
       "test_approach_rationale": "Response classification is deterministic and asserted directly on the body. The correlation id's log correlation is likewise a direct assertion.",
       "alternative_verification": "",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "task-5",

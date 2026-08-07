@@ -103,12 +103,12 @@
 - **Agent**: backend
 - **CLI**: claude
 - **Title**: Distinguish proxy-originated failures and document the way back
-- **Status**: pending
+- **Status**: done
 - **Priority**: 4
 - **Dependencies**: task-3
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/server.js, test/failure-modes.test.js, docs/usage.md
+- **Scope**: src/server.js, test/failure-modes.test.js, docs/usage.md, src/request-id.js, src/index.js
 - **Test Approach**: tdd (unit)
 - **Description**: Three separate transport failures all report proxy_error / 'Upstream unreachable' (src/server.js:276, :551, :659) and a fourth reports 'Internal proxy error' (:489). Tolerable when the operator is the user; not once the proxy is elsewhere. The existing 403 handler (:745) is the model to extend. Implement docs/specs/m1-failure-modes.md against the error-envelope contract.
 - **Acceptance Criteria**:

@@ -59,7 +59,9 @@ test('a 403 on the injected credential reaches the client as a proxy error, not 
   try {
     const { status, body } = await post(proxyPort);
     assert.equal(status, 502);
-    assert.match(body, /proxy_error/);
+    // FR-17.1 split the generic proxy_error into a class per situation; this
+    // one is the credential being refused, which the message already named.
+    assert.match(body, /credential_refused/);
     assert.match(body, /account \\"a\\"/);             // names the account that was rejected
     assert.equal(seen.length, 1);                      // no other account to try
   } finally {
