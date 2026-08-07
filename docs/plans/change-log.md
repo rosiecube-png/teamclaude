@@ -207,3 +207,26 @@ a defect whether or not it reverts.
 That does not make the set of guards complete. It makes each of them **demonstrated**
 rather than assumed, which is the same distinction this document applies to everything
 else.
+
+---
+
+## The gate before master
+
+Everything above is detection after the fact. Each omission entered `master` and was found
+by reading; the guards were written afterwards, one shape at a time. Three things were
+missing between a change and the branch:
+
+| | Was | Now |
+| --- | --- | --- |
+| Direct push to `master` | Allowed — CI could be skipped entirely | Branch protection requires the checks |
+| A governing artifact changing untraced | Nothing asked | `scripts/check-change-trace.mjs` fails the PR |
+| Which omissions are caught | Only shapes already seen | Still only those — see below |
+
+The trace gate is the only one that guards a **class** rather than an instance. It does not
+know what a change should have touched; it requires that somebody said. That is weaker than
+knowing, and it is the difference between an omission that is invisible and one that is
+recorded as deliberate — `n/a` is an answer, silence is not.
+
+**What still is not prevented.** An omission of a kind nobody has met yet passes every
+check here. The guards enumerate known shapes, and the trace gate only forces a sentence to
+be written, not a correct one. This is a floor, not a proof.

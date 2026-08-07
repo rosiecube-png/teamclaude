@@ -34,6 +34,27 @@ jobs:
         if: matrix.node == 24
         run: npm run lint
 
+  trace:
+    name: change trace
+    # Only a pull request has a base to diff against. This is the one check that
+    # asks a question about the change rather than about the tree, and it exists
+    # because every omission this repository has had was a document moving while
+    # its dependants did not.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Governing artifacts must say what they touched
+        run: node scripts/check-change-trace.mjs origin/${{ github.base_ref }}
+
   nix:
     name: nix package
     runs-on: ubuntu-latest

@@ -1,5 +1,13 @@
 export default [
   {
+    // Agent tooling installs itself into the working tree — vendored browser and
+    // Playwright code that is git-ignored and not part of this project. ESLint
+    // walks the filesystem rather than the index, so without this a developer
+    // running `npm run lint` sees dozens of undefined-global errors in files
+    // nobody here wrote.
+    ignores: ['.agents/**', '.claude/**', '.github/skills/**', '.github/prompts/**'],
+  },
+  {
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
