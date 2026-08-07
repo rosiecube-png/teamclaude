@@ -585,6 +585,52 @@ trace and the specs keep a record of what changed, and that is the point of them
 
 ---
 
+## 2026-08-07 — two criteria that were never tested
+
+Asked whether the testing was finished as defined, and checked instead of answering. Every
+requirement id named in the plan's acceptance criteria, mapped against every id named
+anywhere in `test/`:
+
+| | |
+| --- | --- |
+| Ids in acceptance criteria | 35 |
+| Of those, named nowhere in `test/` | **2** — NFR-06 and NFR-07, both task-3 |
+
+| | |
+| --- | --- |
+| Plan | task-3 scope gained `test/streaming-through-policy.test.js` |
+| Board | regenerated |
+| Test | 4 cases |
+| Others | n/a — the code was already correct; the verification was missing |
+
+### NFR-07 was the one that mattered
+
+*An SSE response survives the new path.* Every Claude Code response arrives as
+`text/event-stream`, and task-3 put a policy decision in front of the CONNECT that carries
+them. The MITM integration suite covers that path thoroughly — and sends only whole
+bodies. A change that broke streaming would have gone green.
+
+It does survive: three events with real gaps between them arrive in pieces, and a stream
+idle for six seconds is not cut. The assertion has teeth — collapsing the upstream's
+interval to zero fails it with *every chunk arrived at once, so the stream was collected
+before it was relayed*.
+
+### NFR-06 held by construction, which is the weakest kind of true
+
+*Resolution does not add a lookup per request.* The check runs at CONNECT and requests
+inside a tunnel never reach it, so it was true because of where the call sits rather than
+because anything held it there. Now: three requests through one intercepted tunnel cost
+zero lookups, and one tunnelled CONNECT carrying two payloads costs exactly one.
+
+### The audit itself
+
+Both were found by mapping ids, not by reading. The same pass over `docs/specs/` §5 test
+tables — 34 rows across four specs — found none uncovered. That is a coverage floor and
+not a proof: an id being *named* in the suite is not the same as the behaviour being
+tested, which is what the mutation runs are for.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
