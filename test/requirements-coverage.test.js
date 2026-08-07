@@ -14,8 +14,13 @@ import { join } from 'node:path';
 //
 // Both were found by hand. These tests make the next one fail a run instead.
 
-const DOC = 'docs/saas-requirements.md';
-const SPEC_DIR = 'docs/specs';
+// The guard-proving suite runs these same checks against a mutated copy, so the
+// paths are rooted at a variable. Node runs test files in parallel; a test that
+// mutated the working tree would otherwise fail its neighbours at random.
+const ROOT = process.env.TC_DOCS_ROOT || '.';
+const at = (...parts) => join(ROOT, ...parts);
+const DOC = at('docs', 'saas-requirements.md');
+const SPEC_DIR = at('docs', 'specs');
 
 const doc = () => readFileSync(DOC, 'utf8');
 const specs = () =>
@@ -111,7 +116,7 @@ test('every assumption carries a verification status', () => {
 // what. Each is now a check rather than a promise.
 
 test('the plan and the register describe the same risks', () => {
-  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
+  const plan = JSON.parse(readFileSync(at('docs','plans','m1-plan.json'), 'utf8'));
   const inPlan = [...new Set(
     (JSON.stringify(plan.project_controls.iso_31000).match(/RSK-\d\d/g) || []))].sort();
   const inDoc = [...new Set((doc().match(/\| \*\*RSK-\d\d\*\*/g) || [])
@@ -123,7 +128,7 @@ test('the plan and the register describe the same risks', () => {
 });
 
 test('a measured finding that changed a contract is traced', () => {
-  const trace = readFileSync('docs/plans/change-log.md', 'utf8');
+  const trace = readFileSync(at('docs','plans','change-log.md'), 'utf8');
   // every assumption the register marks measured-false changed something, so it
   // has to appear in the trace with what it touched
   const falsified = doc().split('\n')
@@ -138,8 +143,8 @@ test('a measured finding that changed a contract is traced', () => {
 });
 
 test('the two contracts agree about refusals', () => {
-  const envelope = readFileSync('docs/plans/contracts/m1-error-envelope.md', 'utf8');
-  const seams = readFileSync('docs/plans/contracts/m1-internal-seams.md', 'utf8');
+  const envelope = readFileSync(at('docs','plans','contracts','m1-error-envelope.md'), 'utf8');
+  const seams = readFileSync(at('docs','plans','contracts','m1-internal-seams.md'), 'utf8');
   assert.ok(/request-path/.test(envelope) && /400/.test(envelope),
     'the error envelope no longer distinguishes the request path');
   // S2 places a correlation id; a CONNECT refusal has no body to carry one
@@ -152,7 +157,7 @@ test('the two contracts agree about refusals', () => {
 // Reporting is not enforcing: the next change to project_controls, or to a
 // task's scope, would be checked only if someone remembered to.
 test('the plan is internally consistent', () => {
-  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
+  const plan = JSON.parse(readFileSync(at('docs','plans','m1-plan.json'), 'utf8'));
   const ids = new Set(plan.tasks.map((t) => t.id));
 
   for (const t of plan.tasks) {
@@ -188,8 +193,8 @@ test('the plan is internally consistent', () => {
 // The board is generated from the plan, so it goes stale silently the moment a
 // criterion is added and nobody regenerates it.
 test('the task board matches the plan it came from', () => {
-  const plan = JSON.parse(readFileSync('docs/plans/m1-plan.json', 'utf8'));
-  const board = readFileSync('docs/plans/task-board.md', 'utf8');
+  const plan = JSON.parse(readFileSync(at('docs','plans','m1-plan.json'), 'utf8'));
+  const board = readFileSync(at('docs','plans','task-board.md'), 'utf8');
   const total = plan.tasks.reduce((n, t) => n + t.acceptance_criteria.length, 0);
   assert.ok(total > 0, 'the plan carries no acceptance criteria — nothing to compare');
   const missing = [];
@@ -203,7 +208,7 @@ test('the task board matches the plan it came from', () => {
 // Forward tracing says a finding reached everywhere. It cannot say why a file
 // says what it says, which is the question someone asks opening it cold.
 test('the change trace runs in both directions', () => {
-  const trace = readFileSync('docs/plans/change-log.md', 'utf8');
+  const trace = readFileSync(at('docs','plans','change-log.md'), 'utf8');
   assert.ok(/Reverse index/.test(trace), 'the change trace has no reverse index');
   for (const artifact of ['m1-error-envelope.md', 'm1-internal-seams.md', 'm1-plan.json',
     'requirements-coverage.test.js']) {
@@ -212,7 +217,7 @@ test('the change trace runs in both directions', () => {
 });
 
 test('the M1 plan is validated against the register it ships with', () => {
-  const planPath = 'docs/plans/m1-plan.json';
+  const planPath = at('docs','plans','m1-plan.json');
   assert.ok(existsSync(planPath), 'the durable M1 plan is missing');
 
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));

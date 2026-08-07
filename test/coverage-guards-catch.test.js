@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, cpSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 // A guard that has never failed might be asserting nothing.
@@ -10,10 +12,61 @@ import { execFileSync } from 'node:child_process';
 // the request path", and the pattern wanted "measured false" straight after a
 // pipe. It compared an empty list to an empty list and passed, every run.
 //
-// So each guard is shown to fail against the omission it exists for. Every
-// mutation is written, run, and reverted from memory in the same tick; nothing
-// is left behind even if a run throws, because the original text is held in a
-// local and restored in `finally`.
+// So each guard is shown to fail against the omission it exists for: write the
+// omission, assert the coverage suite goes red, throw the copy away.
+//
+// The copy matters. The first version of this file mutated the working tree, and
+// Node runs test files in parallel — the coverage suite read a half-mutated
+// document and failed for reasons that had nothing to do with it. A test that
+// edits the repository under a parallel runner is a defect regardless of whether
+// it reverts afterwards.
+
+const ARTIFACTS = 'docs';
+const COVERAGE = 'test/requirements-coverage.test.js';
+
+/** A throwaway copy of the artifacts the coverage suite reads. */
+function sandbox() {
+  const dir = mkdtempSync(join(tmpdir(), 'tc-guards-'));
+  cpSync(ARTIFACTS, join(dir, 'docs'), { recursive: true });
+  return dir;
+}
+
+/** Run the coverage suite against `root`. True when it is all green. */
+function coveragePasses(root) {
+  try {
+    const out = execFileSync(process.execPath, ['--test', COVERAGE], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      env: { ...process.env, TC_DOCS_ROOT: root },
+    });
+    return /ℹ fail 0/.test(out);
+  } catch {
+    return false; // a non-zero exit means a check failed, which is the point
+  }
+}
+
+/**
+ * Apply `mutate` to `file` inside a sandbox and assert the suite notices.
+ *
+ * Also asserts the mutation changed something: an anchor that has moved would
+ * otherwise leave this passing while exercising nothing, which is the exact
+ * failure mode this file exists to rule out.
+ */
+function omissionIsCaught(relPath, mutate) {
+  const root = sandbox();
+  try {
+    const file = join(root, relPath);
+    const original = readFileSync(file, 'utf8');
+    const mutated = mutate(original);
+    assert.notEqual(mutated, original,
+      `the mutation did not change ${relPath} — its anchor text has moved, so this ` +
+      'test would pass without exercising the guard');
+    writeFileSync(file, mutated);
+    return coveragePasses(root) === false;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 const DOC = 'docs/saas-requirements.md';
 const LOG = 'docs/plans/change-log.md';
@@ -21,35 +74,11 @@ const SEAMS = 'docs/plans/contracts/m1-internal-seams.md';
 const PLAN = 'docs/plans/m1-plan.json';
 const HARDENING = 'docs/specs/m1-hardening.md';
 
-/** Run the coverage suite against the working tree. True when it is all green. */
-function coveragePasses() {
-  try {
-    const out = execFileSync(process.execPath,
-      ['--test', 'test/requirements-coverage.test.js'],
-      { encoding: 'utf8', stdio: 'pipe' });
-    return /ℹ fail 0/.test(out);
-  } catch {
-    return false; // non-zero exit means a check failed, which is the point
-  }
-}
-
-/**
- * Apply `mutate` to `file`, assert the suite goes red, and put the file back.
- * The revert is in `finally` so a throwing assertion cannot leave the tree dirty.
- */
-function omissionIsCaught(file, mutate) {
-  const original = readFileSync(file, 'utf8');
-  try {
-    const mutated = mutate(original);
-    assert.notEqual(mutated, original,
-      `the mutation did not change ${file} — the anchor text has moved, so this ` +
-      'test would pass without ever exercising the guard');
-    writeFileSync(file, mutated);
-    return coveragePasses() === false;
-  } finally {
-    writeFileSync(file, original);
-  }
-}
+const editJson = (fn) => (s) => {
+  const p = JSON.parse(s);
+  fn(p);
+  return JSON.stringify(p, null, 2) + '\n';
+};
 
 test('an unscheduled requirement is caught', () => {
   assert.ok(omissionIsCaught(DOC, (s) =>
@@ -75,12 +104,11 @@ test('an assumption with a verdict but no grounds is caught', () => {
 });
 
 test('the plan and register risk sets drifting apart is caught', () => {
-  assert.ok(omissionIsCaught(PLAN, (s) => {
-    const p = JSON.parse(s);
-    p.project_controls.iso_31000.top_risks = p.project_controls.iso_31000.top_risks.slice(0, 3);
-    p.project_controls.iso_31000.treatments = p.project_controls.iso_31000.treatments.slice(0, 3);
-    return JSON.stringify(p, null, 2) + '\n';
-  }));
+  assert.ok(omissionIsCaught(PLAN, editJson((p) => {
+    const r = p.project_controls.iso_31000;
+    r.top_risks = r.top_risks.slice(0, 3);
+    r.treatments = r.treatments.slice(0, 3);
+  })));
 });
 
 test('a measured-false finding missing from the trace is caught', () => {
@@ -92,22 +120,18 @@ test('the two contracts disagreeing about refusals is caught', () => {
 });
 
 test('two tasks in one tier owning the same file is caught', () => {
-  assert.ok(omissionIsCaught(PLAN, (s) => {
-    const p = JSON.parse(s);
+  assert.ok(omissionIsCaught(PLAN, editJson((p) => {
     const a = p.tasks.find((t) => t.id === 'task-1');
     const b = p.tasks.find((t) => t.id === 'task-2');
     b.scope.push('src/mitm.js');
     b.priority = a.priority;
-    return JSON.stringify(p, null, 2) + '\n';
-  }));
+  })));
 });
 
 test('a criterion added to the plan but not the board is caught', () => {
-  assert.ok(omissionIsCaught(PLAN, (s) => {
-    const p = JSON.parse(s);
+  assert.ok(omissionIsCaught(PLAN, editJson((p) => {
     p.tasks[1].acceptance_criteria.push('a criterion the board has never seen');
-    return JSON.stringify(p, null, 2) + '\n';
-  }));
+  })));
 });
 
 test('the reverse index disappearing is caught', () => {

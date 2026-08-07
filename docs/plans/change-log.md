@@ -194,10 +194,15 @@ verdict text is "measured false on the request path" and the pattern wanted "mea
 false" straight after a pipe, so it compared an empty list to an empty list and passed
 every run.
 
-`test/coverage-guards-catch.test.js` writes a real omission, asserts the coverage suite
-goes red, and reverts — twelve of them, one per guard. It also refuses to pass when its own
-anchor text has moved, because a mutation that changes nothing would otherwise look like a
-successful test.
+`test/coverage-guards-catch.test.js` copies the artifacts, writes a real omission into the
+copy, asserts the coverage suite goes red against it, and throws the copy away — twelve of
+them, one per guard. It also refuses to pass when its own anchor text has moved, because a
+mutation that changes nothing would otherwise look like a successful test.
+
+The copy is not tidiness. The first version mutated the working tree, and Node runs test
+files in parallel: the coverage suite read a half-mutated document and failed for reasons
+that had nothing to do with it. A test that edits the repository under a parallel runner is
+a defect whether or not it reverts.
 
 That does not make the set of guards complete. It makes each of them **demonstrated**
 rather than assumed, which is the same distinction this document applies to everything
