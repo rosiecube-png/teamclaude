@@ -144,7 +144,8 @@
         "FR-03.5 — unenrol removes exactly what was added and leaves the machine reaching the upstream directly",
         "FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only",
         "Tests use a fixture settings file carrying unrelated keys, not an empty object",
-        "FR-03.3 — a settings.json containing comments still has them afterwards (ASM-18: comments are accepted by the client, and JSON.parse/stringify drops them silently)"
+        "FR-03.3 — a settings.json containing comments still has them afterwards (ASM-18: comments are accepted by the client, and JSON.parse/stringify drops them silently)",
+        "FR-16.3 — the device private key is generated on the device; only a CSR leaves it (ASM-27 left the generator unstated)"
       ],
       "artifacts_expected": [
         "src/enrol.js",
@@ -234,7 +235,8 @@
         "FR-17.2 — an actionable failure names the concrete step, following the shape of src/server.js:745",
         "FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request",
         "NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly",
-        "Existing 403, 429 and pin tests still pass unchanged"
+        "Existing 403, 429 and pin tests still pass unchanged",
+        "The message carries the whole story on its own — error.type may reach the operator and not the user (ASM-29)"
       ],
       "artifacts_expected": [
         "src/server.js",
@@ -455,7 +457,8 @@
       "risk ids threaded through project_controls",
       "NFR-06 added to task-3 — the new resolve-check-connect step is a latency risk",
       "task-0 added: the three shared internal seams are contracted before implementation",
-      "eight hidden assumptions surfaced (ASM-15..22); NFR-17.5, NFR-21.5, NFR-21.6 added; NFR-17.4 removed from owner approvals"
+      "eight hidden assumptions surfaced (ASM-15..22); NFR-17.5, NFR-21.5, NFR-21.6 added; NFR-17.4 removed from owner approvals",
+      "ASM-23..30: crash log and quota state added to the inventory, log retention corrected to a target, FR-16.3 added, the 403 tension recorded"
     ]
   }
 }

@@ -101,6 +101,12 @@ obviously the service rather than an opaque host.
 > **NFR-13.2** Removing the enrolment MUST restore direct operation completely, and MUST be
 > documented as the recovery step.
 
+A **partial** removal is the likely real shape, and it degrades safely: with the proxy gone
+and `NODE_EXTRA_CA_CERTS` left pointing at a deleted file, the client warned
+(`Ignoring extra certs … load failed`) and carried on (ASM-28). So the recovery step does
+not have to be performed perfectly to work, which is what matters when someone is doing it
+during an outage.
+
 This is FR-03.5 seen from the other side. It is the requirement that keeps an outage from
 becoming a lost day, and it matters more than any availability figure in
 [#22](../../../issues/22) — because it is the part that does not depend on the operator

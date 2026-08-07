@@ -100,6 +100,13 @@ enrolment is how a user gets back to work without the operator
 Certificate **files** are placed in M1 even though mTLS enforcement is M2
 ([#6](../../../issues/6)). Placing them now means M2 does not have to redo enrolment.
 
+> **FR-16.3** The device private key MUST be generated on the device. Only a certificate
+> signing request may leave it.
+
+"Places `device.key`" left the generator unstated (ASM-27), and the two readings differ in
+what they mean for §9: a key minted on the server and sent down was, for a moment, the
+server's. Deciding it now costs nothing and stops M2 from inheriting the weaker shape.
+
 > **FR-16.2** For self-hosting the operator copies the artifacts themselves; an
 > authenticated distribution channel is **not** an M1 requirement. It becomes one in M3,
 > when other people enrol.
@@ -156,6 +163,7 @@ The client certificate variables are placed in M1 and unused until
 | Running enrolment twice produces byte-identical output | FR-03.4 |
 | `unenrol` restores the file to its pre-enrolment bytes and removes the artifacts | FR-03.5 |
 | The private key is written with owner-only permissions | FR-16.1 |
+| The private key is generated locally; only a CSR is transmitted | FR-16.3 |
 | A session seen only after settings load is reported as partially configured | FR-18.1 |
 
 FR-03.3 and FR-03.5 want a fixture of a realistic settings file — the one on this machine

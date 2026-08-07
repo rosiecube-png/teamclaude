@@ -57,9 +57,33 @@ State, then the command or setting to change.
 
 A destination refusal carries **no** id: the user can act on it, so FR-17.2 applies instead.
 
+## Why `403` is used here, when the codebase avoids it elsewhere
+
+`src/server.js` deliberately does **not** pass an upstream `403` to the client:
+
+> Claude Code reads a 403 as "your session is dead", drops its own login and asks for a
+> re-login over an account problem it has no part in.
+
+That lesson is about a `403` on the **API response** path. These three are `403` on a
+**CONNECT**, which F09 measured: refused CONNECTs were answered `403` and the client
+carried on normally.
+
+The tension is real and the measurement is thin — one `-p` run, telemetry hosts only
+(ASM-23). Two things keep it bounded:
+
+- The upstream host is **always** `intercept`, so it can never be refused. The dangerous
+  case cannot arise from this policy.
+- If a client is ever seen dropping its login after a refusal, the fix is a different
+  status, not a different message — the class names above stay.
+
 ## Headers
 
 No new headers. `retry-after` keeps its current meaning on 429.
+
+**`error.type` may reach the operator and not the user (ASM-29).** Nothing confirms the
+client branches on it rather than showing `message` alone. So the `message` has to carry
+the whole story on its own, and `error.type` is treated as a log and support affordance
+rather than the primary channel.
 
 ## Not in scope
 
