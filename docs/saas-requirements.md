@@ -14,6 +14,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 | Constraints | 10 — §4.4 |
 | Measured findings | 18 — §2 |
 | Backlog | 1 — egress IP, §5 |
+| Standards audit | [iso-audit.md](iso-audit.md) — 11 absent, 3 unclassified |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
 | Pull requests | [#1](../../pull/1), [#2](../../pull/2), [#10](../../pull/10) |
 
