@@ -39,6 +39,8 @@
   - NFR-17.4 — leafDays and renewBeforeDays are configurable under proxy.certs, with defaults shorter than today's 825
   - A leaf inside the window that covers the hosts is still reused — no needless churn
   - docs/configuration.md documents proxy.certs
+  - NFR-17.5 — the renewal check is not memoised for the process lifetime, and a replaced chain reaches new connections without a restart; both certsPromise (server.js:182) and serverPromises (mitm.js:131) must be addressed
+  - A connection open across a replacement is not disturbed (ASM-17: TLS validates at handshake, measured)
 
 ### task-2
 - **Agent**: backend
@@ -60,6 +62,7 @@
   - FR-03.5 — unenrol removes exactly what was added and leaves the machine reaching the upstream directly
   - FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only
   - Tests use a fixture settings file carrying unrelated keys, not an empty object
+  - FR-03.3 — a settings.json containing comments still has them afterwards (ASM-18: comments are accepted by the client, and JSON.parse/stringify drops them silently)
 
 ### task-3
 - **Agent**: backend
@@ -91,6 +94,9 @@
   - NFR-26 — the address tests exercise boundaries, not one member per class: the edges of 127.0.0.0/8, 169.254.169.254 itself, the 172.16-172.31 limits, and IPv4-mapped IPv6 forms
   - NFR-07 — an SSE response survives the new path; no idle timeout is introduced below the client watchdogs
   - NFR-06 — resolution does not add a DNS lookup per request; results are reused for the life of a tunnel at minimum, and the measured headroom (F07, F08) is not spent
+  - NFR-21.5 — a name resolving to any blocked address is refused even when it also resolves to a permitted one
+  - NFR-21.6 — the blocked set is enumerated, not sampled: 10/8, 127/8, 169.254/16, 172.16-31, 192.168/16, 100.64/10, 0/8, ::1, fc00::/7, fe80::/10, and IPv4-mapped forms
+  - FR-07.3 — allowlist entries are exact hostnames; no wildcard form is introduced
 
 ### task-4
 - **Agent**: backend

@@ -70,7 +70,12 @@ call and spends no quota, but it is the difference between "all traffic" and "al
 > settings are read.
 
 > **FR-03.3** Writing `settings.json` MUST merge into any existing `env` block and preserve
-> every unrelated key. It MUST NOT rewrite the file wholesale.
+> every unrelated key **and every comment**. It MUST NOT rewrite the file wholesale.
+
+Comments are the part "every unrelated key" misses. A `settings.json` containing a `//`
+comment was accepted and the session ran normally (ASM-18), so users may reasonably have
+them — and `JSON.parse` followed by `stringify` drops them silently, which is the worst
+shape a data-loss bug can take.
 
 The file holds the user's own settings — `model`, `theme`, `autoUpdatesChannel` and so on.
 Losing them to enrolment would be a poor trade for a proxy.
@@ -147,6 +152,7 @@ The client certificate variables are placed in M1 and unused until
 | Enrolment writes the `env` block to the user-scope path | FR-03.1 |
 | Enrolment emits the shell export | FR-03.2 |
 | An existing `settings.json` keeps every unrelated key, and an existing `env` block is merged | FR-03.3 |
+| A `settings.json` containing comments still has them afterwards | FR-03.3, ASM-18 |
 | Running enrolment twice produces byte-identical output | FR-03.4 |
 | `unenrol` restores the file to its pre-enrolment bytes and removes the artifacts | FR-03.5 |
 | The private key is written with owner-only permissions | FR-16.1 |

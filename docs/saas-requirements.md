@@ -10,7 +10,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 | | |
 | --- | --- |
 | Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
-| Assumptions | 14 — 6 verified, 7 unverified, 1 known false — §4.3 |
+| Assumptions | 22 — 8 verified, 11 unverified, 3 known false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Risks | 8 rated, owned, with residual — §10 |
 | Measured findings | 18 — §2 |
@@ -343,6 +343,14 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-11** | The upstream's response contract is stable | ❌ **unverified** — quota tracking parses `anthropic-ratelimit-unified-*`. If those headers change, rotation degrades **silently**. The server-side twin of ASM-10, and nothing watches for it |
 | **ASM-12** | Headless token refresh keeps working without user interaction | ❌ **unverified** — re-login prompts are already reported in ordinary use |
 | **ASM-13** | Enrolment leaves both configuration locations in place | ❌ **unverified** — FR-03 needs both; if one is lost the leak is silent (F16). Nothing detects the half-configured state |
+| **ASM-15** | Regenerating a certificate takes effect | ❌ **false** — `certsPromise` (`src/server.js:182`) and `serverPromises` (`src/mitm.js:131`) are both memoised for the process lifetime, and the terminating server bakes the cert in at creation. Nothing re-reads until restart |
+| **ASM-16** | A leaf swap needs no client action | ✅ **verified** — clients are handed `caPath` only (`src/index.js:648`, `:718`); a fresh leaf under the same CA validates with no client change |
+| **ASM-17** | An expiring certificate does not disturb work in flight | ✅ **measured** — an established TLS connection carried traffic 2s past `notAfter`; a new connection was refused with `CERT_HAS_EXPIRED`. TLS validates at handshake |
+| **ASM-18** | `~/.claude/settings.json` is plain JSON | ❌ **false** — a file containing a `//` comment was accepted and the session ran. `JSON.parse`/`stringify` would drop it silently, so FR-03.3's "preserve every unrelated key" is not sufficient |
+| **ASM-19** | The private-address list is complete | ❌ **unverified** — the spec names `127.0.0.0/8`, `169.254.169.254` and `172.16`–`172.31`. It does not name `100.64.0.0/10`, `0.0.0.0/8`, `fc00::/7`, `fe80::/10` or `::1` |
+| **ASM-20** | A hostname resolves to addresses of one kind | ❌ **unverified** — `lookup(host, {all:true})` can return public and private together. Whether any private address refuses, or a public one may be chosen, is unstated |
+| **ASM-21** | Allowlist entries are exact hostnames | ❌ **unverified** — nothing says whether `*.claude.ai` is expressible, and the client reaches several `claude.ai` and `anthropic.com` names |
+| **ASM-22** | The certificate directory has one writer | ❌ **unverified** — `ensureCerts` is also called from the CLI (`src/index.js:648`, `:718`), so `teamclaude run` can regenerate while a server holds a memo of the old chain |
 | **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
 
 ### 4.4 Constraints — CON
