@@ -3,3 +3,5 @@ config.json
 *.log
 package-lock.json
 .agents/
+.github/skills/
+.github/prompts/
