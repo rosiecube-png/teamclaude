@@ -631,6 +631,72 @@ tested, which is what the mutation runs are for.
 
 ---
 
+## 2026-08-07 — ASM-30, the last thing left open
+
+Carried as ❌ *unverified* since the sweep. It reproduces.
+
+| | |
+| --- | --- |
+| Register | ASM-30 closed, with what is fixed and what is not |
+| Plan | task-5 scope gained `src/mitm.js` and the new test; a criterion added |
+| Board | regenerated |
+| Test | `test/cert-concurrency.test.js`, 9 cases |
+| Others | n/a — no requirement changed, an assumption was settled |
+
+### What it looked like
+
+Three processes regenerating concurrently, with a fourth reading the pair the way every
+intercepted CONNECT does:
+
+| | |
+| --- | --- |
+| Mismatched pairs — a CA from one run beside a leaf from another | **820 in 17,249 reads (4.75%)** |
+| Half-written PEM (`ERR_OSSL_PEM_NO_START_LINE`) | 65 more |
+| Writers failing outright | **4–10 `EPERM` per process** — on Windows a rename over a file another process holds is refused |
+
+### The fix, and what it does not fix
+
+An exclusive `wx` create around regeneration; a rename that retries on `EPERM`; and a torn
+pair re-read once before it is believed. Under contention `ensureCerts` now returns no
+incoherent chain and throws nothing, held end to end by two processes churning while a
+third checks.
+
+**Two processes configured with different upstreams sharing one directory still churn** —
+3,367 torn reads in 18,130. They are asking for incompatible chains and will replace each
+other's work forever; no lock fixes a disagreement about what the answer should be. That is
+a misconfiguration, and it is written down rather than asserted away.
+
+### Three probes were wrong before one was right
+
+Worth recording, because each was convincing:
+
+| Attempt | What it actually measured |
+| --- | --- |
+| 1 | 64% "unreadable" — the reader counted the moments **before the first mint**, when the directory was simply empty |
+| 2 | The writers planted an inconsistent chain by hand each round, so the residual mismatch was **the probe's own writes**, not `ensureCerts` |
+| 3 | Same-host writers after seeding — nobody regenerated at all, so it measured **a quiet directory** and would have passed with the lock removed |
+
+The fourth forced contention the way it arises — the chain falls due, every process notices
+at once, all wanting the same host — and only that one distinguishes the fix from its
+absence.
+
+### One test was deleted rather than kept green
+
+A unit test wrote a torn pair, restored it on a 2ms timer, and asserted no regeneration.
+The first read is itself asynchronous, so the timer usually fired before anything looked:
+it passed with the code it was testing removed. Deleted, and the comment in its place says
+why.
+
+### What is pinned, and what is only measured
+
+| | |
+| --- | --- |
+| The lock | pinned — removing it fails three tests |
+| The rename retry | pinned — removing it fails the contention test |
+| The two re-checks | **not pinned.** They avoid *redundant* minting and measurably do — 1.7% of calls against 4.6%, and roughly twice the throughput, because a keypair is expensive — but that is a rate under a noisy concurrent load, and a threshold would be flaky. They are also redundant with each other, so no single-line mutation can show either working. Recorded in the test rather than asserted |
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -677,6 +743,7 @@ cold. ISO 21500 wants both directions.
 | `src/enrol.js` | Exists at all ← FR-03 · text editing rather than parsing ← FR-03.3 and ASM-18 · module boundary ← S3 · settings env derived from the shell lines ← FR-03 wanting the two locations to agree |
 | `src/claude-env.js` | `host`/`scheme` ← FR-03.2 against a hosted proxy · `certPath`/`keyPath` ← FR-16.1, unused until [#6](../../issues/6) · still pure ← S3 |
 | `src/x509.js` (again) | `createCsr` ← FR-16.3 · verified with openssl ← hand-built DER checked by its own writer proves nothing |
+| `src/mitm.js` certificate locking | Exists at all ← ASM-30, measured at 4.75% torn reads · the rename retry ← 4–10 EPERM per process on Windows · the re-read ← a 3-file update is not atomic to a reader · the different-upstream case left open ← it is a disagreement, not a race |
 | `src/enrol.js` `checkEnrolment` | Exists at all ← FR-18.1 · on the machine rather than at the proxy ← two runs producing identical traffic · stripping comments to read ← the writer deliberately never parses |
 | `src/request-id.js` | Exists at all ← S2 and FR-17.3 · 8 hex rather than a UUID ← it is read aloud and typed back · separate from `reqId` ← that one is a display concern |
 | `src/server.js` `FAILURE_CLASSES` | Exists at all ← FR-17.1 · `actionable` splitting the table ← FR-17.2 against FR-17.3 · the message carrying everything ← ASM-29, measured · `upstream_error` and `egress_not_pinned` ← reading every site, not the contract |
