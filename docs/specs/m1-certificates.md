@@ -12,9 +12,13 @@ people.
 
 Every statement about current behaviour was read out of the source and cites where.
 
+> **Built.** NFR-17.1 to NFR-17.5 all shipped in task-1. Sections 1 and 2 describe the
+> behaviour that was replaced and are kept in the past tense, because the reasoning for
+> the shape of the fix only makes sense against them. What shipped is in section 6.
+
 ---
 
-## 1. What the proxy does today
+## 1. What the proxy did before task-1
 
 `ensureCerts()` — `src/mitm.js:73` — reuses the stored chain when `leafCovers()` approves
 it:
@@ -49,7 +53,7 @@ are written (`:85` onward).
 
 ---
 
-## 2. What is wrong
+## 2. What was wrong
 
 ### 2.1 An expired leaf is reused, not replaced
 
@@ -165,13 +169,25 @@ with a past `notAfter` directly — no clock manipulation needed.
 
 ---
 
-## 6. Open
+## 6. What shipped
 
-**`leafDays` and `renewBeforeDays` are not an owner decision.** They were listed as one, in
-error: a leaf swap needs no client action (ASM-16, verified — clients hold the CA, not the
-leaf), so nothing competes with making the lifetime short enough to exercise renewal. The
-values follow from NFR-17.5 rather than from preference, and 90 / 30 is proposed on that
-basis.
+**`leafDays` and `renewBeforeDays` were not an owner decision.** They were listed as one,
+in error: a leaf swap needs no client action (ASM-16, verified — clients hold the CA, not
+the leaf), so nothing competed with making the lifetime short enough to exercise renewal.
+The values follow from NFR-17.5 rather than from preference. **90 / 30 shipped.**
 
 The CA lifetime *is* a decision, and belongs to [#5](../../../issues/5), where the key
-stops being disposable and devices start trusting a specific one.
+stops being disposable and devices start trusting a specific one. It stays at 3650 days
+and stays out of `proxy.certs`.
+
+| | |
+| --- | --- |
+| The reuse decision | `certReuseProblem()` returns *why* rather than a boolean, so NFR-17.3 is the same code path as the decision itself and cannot drift from it |
+| NFR-17.5, the first memo | Deleted. `certsPromise` became an in-flight-only promise: concurrent CONNECTs on a cold start still share one check, and nothing survives it settling |
+| NFR-17.5, the second memo | `serverPromises` entries carry the leaf they were minted with. A superseded server is dropped, not closed, so tunnels already running on it are undisturbed (ASM-17) |
+| The cost of not caching | **0.386 ms** per revalidation — measured, three file reads and two X.509 parses. A CONNECT then does a TLS handshake. Cheap enough that the third config key a TTL would have needed was not worth its own semantics |
+| ASM-22 | Settled as a consequence: the CLI regenerating a chain now reaches a running server. More than one writer remains, which is ASM-30 and task-5 |
+| The clamp | `renewBeforeDays >= leafDays` makes every fresh certificate immediately due, so `ensureCerts` would regenerate on every CONNECT forever. It is halved instead, and reported once — once mattering only because nothing memoises any more |
+
+Each requirement is held by a test in `test/cert-lifetime.test.js`, and each of those was
+shown to fail against the behaviour it replaced before it was kept.

@@ -139,6 +139,15 @@ test('the reverse index disappearing is caught', () => {
     s.replace('## Reverse index — what shaped each artifact', '## Notes')));
 });
 
+test('a task not owning a file its own criteria cite is caught', () => {
+  // How task-1 shipped: criterion 7 named src/server.js:182 and the scope did
+  // not list it. The overlap check only ever asked about two tasks in one tier.
+  assert.ok(omissionIsCaught(PLAN, editJson((p) => {
+    const t = p.tasks.find((x) => x.id === 'task-1');
+    t.scope = t.scope.filter((s) => !s.includes('server.js'));
+  })));
+});
+
 test('M1 claiming a requirement the plan never mentions is caught', () => {
   assert.ok(omissionIsCaught(DOC, (s) =>
     s.replace('| Boundary values exercised wherever a requirement classifies a range | NFR-26 |',

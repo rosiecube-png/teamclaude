@@ -142,6 +142,67 @@ retried; `400` → the message, clean.
 
 ---
 
+## 2026-08-07 — task-1, certificate renewal ([#21](../../issues/21))
+
+The first M1 task built rather than written. NFR-17.1 to NFR-17.5.
+
+| | |
+| --- | --- |
+| Register | ASM-15 ❌ → ✅, the memos are gone · ASM-22 narrowed to its cause · ASM-30 marked *sampled more often* |
+| Risks | RSK-03 residual dropped — a detected client change no longer waits for a restart |
+| Spec | `m1-certificates.md` §6 is *what shipped*; §1 and §2 moved to the past tense |
+| Plan | task-1 `status: done`; scope gained `src/server.js` and `src/index.js` |
+| Board | regenerated — status and scope |
+| Test | `requirements-coverage` gained *a task owns the files its acceptance criteria name*, with its mutation proof — the class the scope defect got through |
+| Contract | n/a — no interface or wire shape changed |
+| Governance | n/a — the one approval here was withdrawn on 2026-08-07, and 90/30 shipped as derived |
+| Issue | [#21](../../issues/21) |
+| Test | `test/cert-lifetime.test.js`, 15 cases |
+| Docs | `docs/configuration.md` — `proxy.certs` and a **MITM certificates** section |
+
+### Two things the plan had wrong, found by building it
+
+**task-1 could not be done inside its own scope.** Acceptance criterion 7 names
+`src/server.js:182` and the scope listed four files, none of them that one. The plan's
+consistency guard checks that no two tasks in a tier own the same file; nothing checked
+that a task owns the files its own criteria name. Scope corrected. No tier-2 collision —
+task-2 owns `src/enrol.js` and `src/claude-env.js`; `server.js` is otherwise task-3's, in
+a later tier.
+
+**Removing a memo made a warning chatty.** `ensureCerts` runs on every intercepted CONNECT
+now, so a one-line complaint about a misconfigured `renewBeforeDays` printed on every
+connection. Found while writing the sentence in `configuration.md` that claimed it was
+said at startup. Now said once per distinct value, with a test that fails without the
+guard.
+
+### The measurement that decided the design
+
+NFR-17.5 forbids memoising the renewal check, and the obvious replacement is a TTL — which
+needs a third key under `proxy.certs`, a surface the spec had deliberately closed at two.
+Revalidating unconditionally was **measured at 0.386 ms** (three file reads, two X.509
+parses; the signature verify is 0.024 ms of it) against a CONNECT that then performs a TLS
+handshake. No cache, no third key, no staleness semantics to document.
+
+### The tests were shown to fail first
+
+Four mutations, each reintroducing exactly one piece of the old behaviour:
+
+| Reverted to | Caught by |
+| --- | --- |
+| The server memo ignores which leaf it baked in | *a chain replaced mid-process reaches the next connection* |
+| The cert check is memoised for the process lifetime | the same test — each memo alone is enough to break it |
+| The reuse check reads no dates (the #21 bug) | 6 tests |
+| `leafDays` ignored at issuance | *leafDays and renewBeforeDays are read from proxy.certs* |
+
+The first version of the file also had a defect of its own: a failing assertion left the
+tunnel socket open and Node would not exit, so the run hung for ten minutes instead of
+reporting. `--test-timeout` does not reach it — the test had finished; the process could
+not leave. Then owning both the raw socket and the TLS socket wrapping it and destroying
+each in turn crashed the runner outright, exit `3221225477`. One socket per connection is
+owned now.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -180,6 +241,11 @@ cold. ISO 21500 wants both directions.
 | `contracts/m1-internal-seams.md` | S1 connect-by-address ← `mitm.js:197` · S2 log-only id on CONNECT ← the envelope split · S3 boundary ← `claude-env.js:14`, `alias.js:79` |
 | `plans/m1-plan.json` governance | NFR-17.5 approval ← ASM-15 · lifetimes removed ← ASM-16 · M4 inputs ← ASM-40, [#30](../../issues/30) |
 | `test/requirements-coverage.test.js` | Each of the nine checks exists because that failure happened once — the comments name which |
+| `src/x509.js` | `DEFAULT_LEAF_DAYS` 825 → 90 ← NFR-17.4 · lifetimes became parameters ← NFR-17.4 · `DEFAULT_CA_DAYS` left alone ← [#5](../../issues/5) owns it |
+| `src/mitm.js` | `certReuseProblem` replaced `leafCovers` ← NFR-17.1, NFR-17.2, NFR-17.3 · `serverPromises` keyed by leaf ← NFR-17.5 · dropped not closed ← ASM-17 · the clamp said once ← the memo removal made it chatty |
+| `src/server.js` | `certsPromise` → in-flight only ← NFR-17.5 · revalidating unconditionally ← 0.386 ms, measured |
+| `docs/configuration.md` | `proxy.certs` ← NFR-17.4 · the reason table ← NFR-17.3 · no CA lifetime ← [#5](../../issues/5) |
+| `test/cert-lifetime.test.js` | Every case names its requirement; the four the mutations proved are listed above |
 
 **Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,
 which is how the first register was built and why the audit found eleven gaps in it.
@@ -195,8 +261,8 @@ false" straight after a pipe, so it compared an empty list to an empty list and 
 every run.
 
 `test/coverage-guards-catch.test.js` copies the artifacts, writes a real omission into the
-copy, asserts the coverage suite goes red against it, and throws the copy away — twelve of
-them, one per guard. It also refuses to pass when its own anchor text has moved, because a
+copy, asserts the coverage suite goes red against it, and throws the copy away — thirteen
+of them, one per guard. It also refuses to pass when its own anchor text has moved, because a
 mutation that changes nothing would otherwise look like a successful test.
 
 The copy is not tidiness. The first version mutated the working tree, and Node runs test

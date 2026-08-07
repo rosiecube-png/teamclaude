@@ -41,6 +41,7 @@ Volatile runtime state (observed quota) is written separately to `teamclaude.sta
 | `proxy.host` | Interface to bind. Defaults to `127.0.0.1` (localhost only). Set to `0.0.0.0` (or override with env `TEAMCLAUDE_HOST`) to accept off-box clients — in which case **set `proxy.apiKey`**, since remote clients must present it (via `x-api-key`, or `Proxy-Authorization` for CONNECT/HTTPS-proxy usage); loopback is always exempt |
 | `proxy.apiKey` | API key clients use to authenticate with the proxy (required for any non-loopback client; the proxy injects real account tokens, so an unauthenticated open port would leak them) |
 | `proxy.tls` | Serve the proxy itself over TLS: `{ "cert": "/path/fullchain.pem", "key": "/path/privkey.pem", "ca": "optional-chain.pem" }`. **Set this whenever `proxy.host` is not loopback** — on a plain listener `proxy.apiKey` travels in clear on every request (`x-api-key`) and every `CONNECT` (`Proxy-Authorization`), and that key is permission to have account tokens injected. Clients then use `https://host:port` (Claude Code accepts an `https://` proxy URL). Paths are re-read only at startup, so reload after an ACME renewal; an unreadable file is a startup error rather than a silent fall back to plaintext |
+| `proxy.certs` | Lifetime of the MITM certificate chain the proxy mints for itself: `{ "leafDays": 90, "renewBeforeDays": 30 }` (the defaults). The leaf is replaced once it has fewer than `renewBeforeDays` left, so renewal happens before anything breaks rather than at the moment it does — see [MITM certificates](#mitm-certificates) |
 | `upstream` | Upstream API base URL |
 | `switchThreshold` | Quota utilization (0–1) at which to switch accounts (TUI settings screen: **Switch threshold**) |
 | `quotaProbeSeconds` | Background [quota-probe](quota.md#quota-probe) interval in seconds (`0` = off, the default; CLI `probe`, or the **Quota probe** row on the TUI settings screen) |
@@ -78,6 +79,30 @@ Volatile runtime state (observed quota) is written separately to `teamclaude.sta
 ```bash
 TEAMCLAUDE_CONFIG=./my-config.json teamclaude server
 ```
+
+## MITM certificates
+
+In [MITM mode](proxy-modes.md) the proxy terminates each `CONNECT` with a certificate it mints itself, under a CA it also mints and whose private key it immediately discards. Clients trust that CA via `NODE_EXTRA_CA_CERTS`; nothing durable trusts the leaf.
+
+The chain is checked on every intercepted `CONNECT` and replaced when it can no longer be used. The reason is always logged:
+
+| Reason | What it means |
+| --- | --- |
+| `the leaf has expired` | It lapsed before anything renewed it — every intercepted TLS connection was failing |
+| `the leaf is due for renewal` | Inside `renewBeforeDays`, replaced while it still works |
+| `the CA has expired` / `is due for renewal` | The leaf's own dates say nothing about the certificate that signed it |
+| `the leaf does not cover …` | `upstream` changed, so the stored leaf is for the wrong host |
+| `the leaf is not signed by the stored CA` | The two files no longer belong together |
+
+```json
+{ "proxy": { "certs": { "leafDays": 90, "renewBeforeDays": 30 } } }
+```
+
+A replaced chain reaches the **next** connection — there is no restart and no cache to clear. Connections already open are not disturbed: TLS validates at handshake, so a tunnel that was established under the old certificate keeps running on it until it closes.
+
+`renewBeforeDays` must be shorter than `leafDays`. If it is not, every freshly minted certificate would be due for renewal the moment it was written and the proxy would regenerate the chain on every connection; the value is reduced to half the lifetime instead, and the proxy says so the first time it applies it.
+
+CA lifetime is deliberately not configurable. While the CA key is discarded and the chain is regenerated freely it is not an operator-facing decision — it becomes one when the key is persisted and enrolled devices trust a specific CA.
 
 ## Network resilience
 
