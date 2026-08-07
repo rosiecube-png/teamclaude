@@ -1015,6 +1015,7 @@ async function apiCommand() {
  * misses background agents.
  */
 async function enrolCommand(argv) {
+  if (argv.includes('--check')) return enrolCheckCommand();
   const at = argv.indexOf('--proxy');
   const proxyUrl = at >= 0 ? argv[at + 1] : null;
   if (!proxyUrl) {
@@ -1036,6 +1037,30 @@ async function enrolCommand(argv) {
   console.log('');
   console.log('Open a new terminal, or source your shell rc, for the export to take effect.');
   console.log('Undo any time with: teamclaude unenrol');
+}
+
+/**
+ * Report which of the two configuration locations are in place (FR-18.1).
+ *
+ * Not at the proxy: two controlled runs showed a shell-export-only and a
+ * settings-only client produce identical request sequences there, so it cannot
+ * tell them apart. Here both files are readable.
+ */
+async function enrolCheckCommand() {
+  const { checkEnrolment } = await import('./enrol.js');
+  const r = await checkEnrolment();
+  const mark = (ok) => (ok ? 'ok     ' : 'MISSING');
+  console.log(`${mark(r.settings.present)}  ${r.settingsPath}`);
+  console.log(`${mark(r.shell.present)}  ${r.rcPath}`);
+  console.log(`${mark(!r.artifacts.missing.length)}  ${r.artifactDir}`);
+  if (r.complete) {
+    console.log('');
+    console.log('Both locations are configured. They cover different windows, which is why both are needed.');
+    return;
+  }
+  console.log('');
+  for (const p of r.problems) console.log(`- ${p}`);
+  process.exitCode = 1;
 }
 
 /** Undo enrolment, leaving the machine reaching the upstream directly (NFR-13.2). */
@@ -1431,6 +1456,10 @@ Commands:
                       are read, and settings are what background agents honour
   unenrol             Undo it. This is the recovery step when the service is
                       unreachable: it leaves the machine reaching the API directly
+  enrol --check       Report which of the two locations are in place. The proxy
+                      cannot tell -- a settings-only and a shell-only client send
+                      it identical traffic (measured) -- so the check runs here,
+                      where both files can be read
   service <sub>       Run the proxy as a user service that starts at login and
                       restarts on its own: install | uninstall | status | print
                       (LaunchAgent on macOS, systemd --user unit on Linux;

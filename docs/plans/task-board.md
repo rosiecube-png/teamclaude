@@ -124,15 +124,20 @@
 - **Agent**: backend
 - **CLI**: claude
 - **Title**: Detect a partially configured client
-- **Status**: pending
+- **Status**: done
 - **Priority**: 5
 - **Dependencies**: task-2, task-3, task-4
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/server.js, test/partial-config.test.js
+- **Scope**: src/enrol.js, src/index.js, test/partial-config.test.js
 - **Test Approach**: tdd (unit)
-- **Description**: FR-18.1. ASM-13 records that nothing detects a half-configured machine: if one of the two configuration locations is lost, traffic leaks silently and everything appears to work. The detectable half uses a signal already on the wire — the pre-settings request arrives only when the shell export is present, so a session whose first contact is the post-settings burst was configured by settings.json alone.
+- **Description**: FR-18.1 was written around a proxy-side signal (F05's pre-settings /api/eval request) that does not exist on client 2.1.224: two controlled runs, shell-export only and project-scope settings only, produced identical request sequences with no /api/eval at all. The check reads both locations on the machine instead.
 - **Acceptance Criteria**:
+    - FR-18.1 — a machine configured through only one of the two locations is detected, and the report names which is missing
+    - The report is visible without reading logs — teamclaude enrol --check, exiting non-zero when something is missing
+    - Proxy-side detection is documented as impossible, with the measurement: a shell-only and a settings-only client send identical traffic
+    - No false positive for a correctly enrolled client
+    - The report names what each missing location costs, not just that it is missing
   - FR-18.1 — a session that first appears after settings load is reported as partially configured, naming the missing location
   - The report is visible without reading logs — activity stream or status endpoint
   - The inverse case (settings missing, shell present) is documented as not detectable proxy-side, with the reason
