@@ -134,29 +134,42 @@ function newRsaKey() {
   };
 }
 
-export function createCA(cn = 'TeamClaude Local CA') {
+// The CA outlives many leaves on purpose: replacing it is the expensive half.
+// Today the CA key is discarded and the chain is regenerated freely, so this is
+// not an operator-facing number. It becomes one in #5, when the key is
+// persisted and enrolled devices trust a specific CA.
+export const DEFAULT_CA_DAYS = 3650;
+
+// Was 825. A leaf that long outlives every operator's attention: nobody
+// observes a renewal before it bites, so the renewal path is never exercised
+// until the day it has to work. 90 days runs it routinely. Nothing durable
+// trusts the leaf -- clients hold the CA (ASM-16, verified) -- so shortening it
+// costs no client action.
+export const DEFAULT_LEAF_DAYS = 90;
+
+export function createCA(cn = 'TeamClaude Local CA', days = DEFAULT_CA_DAYS) {
   const key = newRsaKey();
   const certPem = buildCert({
     subjectCN: cn, issuerCN: cn, spkiDer: key.spkiDer, signKey: key.privateKey,
-    isCA: true, days: 3650,
+    isCA: true, days,
   });
   return { cn, certPem, keyPem: key.keyPem, privateKey: key.privateKey };
 }
 
-export function createLeaf(hosts, ca) {
+export function createLeaf(hosts, ca, days = DEFAULT_LEAF_DAYS) {
   const list = Array.isArray(hosts) ? hosts : [hosts];
   const key = newRsaKey();
   const certPem = buildCert({
     subjectCN: list[0], issuerCN: ca.cn, spkiDer: key.spkiDer, signKey: ca.privateKey,
-    isCA: false, altDnsNames: list, days: 825,
+    isCA: false, altDnsNames: list, days,
   });
   return { certPem, keyPem: key.keyPem };
 }
 
 /** Generate a fresh CA + a leaf covering `hosts` (string or array). Returns PEM strings. */
-export function generateCertChain(hosts) {
-  const ca = createCA();
-  const leaf = createLeaf(hosts, ca);
+export function generateCertChain(hosts, { leafDays = DEFAULT_LEAF_DAYS, caDays = DEFAULT_CA_DAYS } = {}) {
+  const ca = createCA(undefined, caDays);
+  const leaf = createLeaf(hosts, ca, leafDays);
   return {
     caCertPem: ca.certPem,
     caKeyPem: ca.keyPem,

@@ -19,7 +19,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import http2 from 'node:http2';
 import { getConfigPath } from './config.js';
-import { generateCertChain } from './x509.js';
+import { generateCertChain, DEFAULT_LEAF_DAYS } from './x509.js';
 import { createProxyRequestListener, safeKeyEqual, isLoopbackAddr, relayUpgrade, resolveAccountPin } from './server.js';
 
 const CA_CERT = 'teamclaude-ca.pem';
@@ -50,17 +50,74 @@ async function atomicWrite(path, data, mode) {
   await rename(tmp, path);
 }
 
-// Is the stored leaf signed by the stored CA and valid for every host in `hosts`?
-function leafCovers(caCertPem, leafCertPem, hosts) {
-  try {
-    const ca = new X509Certificate(caCertPem);
-    const leaf = new X509Certificate(leafCertPem);
-    if (!leaf.verify(ca.publicKey)) return false;
-    const names = (leaf.subjectAltName || '').split(',').map((s) => s.trim());
-    return hosts.every((h) => names.includes(`DNS:${h}`));
-  } catch {
-    return false;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Shipped certificate policy. See `proxy.certs` in docs/configuration.md. */
+export const CERT_DEFAULTS = Object.freeze({
+  leafDays: DEFAULT_LEAF_DAYS,
+  renewBeforeDays: 30,
+});
+
+const positiveDays = (v, fallback) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback);
+
+/**
+ * Resolve `proxy.certs` against the shipped defaults.
+ *
+ * `clamped` is the operator's renewBeforeDays when it had to be overridden, so
+ * the caller can say so. A window at least as wide as the lifetime makes every
+ * freshly minted certificate immediately due for renewal, and ensureCerts would
+ * then regenerate the chain on every CONNECT forever. Half the lifetime still
+ * renews early and terminates.
+ */
+export function certOptions(config) {
+  const certs = config?.proxy?.certs || {};
+  const leafDays = positiveDays(certs.leafDays, CERT_DEFAULTS.leafDays);
+  const asked = positiveDays(certs.renewBeforeDays, CERT_DEFAULTS.renewBeforeDays);
+  if (asked < leafDays) return { leafDays, renewBeforeDays: asked, clamped: null };
+  return { leafDays, renewBeforeDays: Math.max(1, Math.floor(leafDays / 2)), clamped: asked };
+}
+
+function expiryProblem(what, cert, renewBeforeDays) {
+  const notAfter = new Date(cert.validTo).getTime();
+  if (!Number.isFinite(notAfter)) return `the ${what} has no readable expiry date`;
+  const left = (notAfter - Date.now()) / DAY_MS;
+  if (left <= 0) return `the ${what} has expired`;
+  if (left <= renewBeforeDays) {
+    return `the ${what} is due for renewal — ${left.toFixed(1)} days left, window ${renewBeforeDays}`;
   }
+  return null;
+}
+
+/**
+ * Why the stored chain cannot be reused, in words, or null when it can be.
+ *
+ * The old check read two things — signed by our CA, covers the hosts — and no
+ * dates at all. So an expired leaf still satisfied it: the signature was intact
+ * and the SANs matched, and `ensureCerts` handed it to the terminating server
+ * while every intercepted TLS connection failed. The only recovery was deleting
+ * the files by hand, and nothing warned as the date approached, because nothing
+ * looked at the date (#21).
+ *
+ * A string rather than a boolean because silent regeneration is how that went
+ * unnoticed for as long as it did (NFR-17.3).
+ */
+export function certReuseProblem(caCertPem, leafCertPem, hosts, { renewBeforeDays } = {}) {
+  let ca, leaf;
+  try {
+    ca = new X509Certificate(caCertPem);
+    leaf = new X509Certificate(leafCertPem);
+  } catch (err) {
+    return `the stored chain could not be read — ${err.message}`;
+  }
+  if (!leaf.verify(ca.publicKey)) return 'the leaf is not signed by the stored CA';
+
+  const names = (leaf.subjectAltName || '').split(',').map((s) => s.trim());
+  const missing = hosts.filter((h) => !names.includes(`DNS:${h}`));
+  if (missing.length) return `the leaf does not cover ${missing.join(', ')}`;
+
+  // The CA first: a leaf's own dates say nothing about the certificate that
+  // signed it, and a fresh leaf under a lapsed CA is just as unusable (NFR-17.2).
+  return expiryProblem('CA', ca, renewBeforeDays) || expiryProblem('leaf', leaf, renewBeforeDays);
 }
 
 /**
@@ -70,17 +127,34 @@ function leafCovers(caCertPem, leafCertPem, hosts) {
  * which only authenticates as `host` to a process that already trusts our CA.
  * Returns { caPath, caCertPem, leafCertPem, leafKeyPem }.
  */
-export async function ensureCerts(host) {
+// Said once, not once per connection. Nothing memoises the renewal check any
+// more (NFR-17.5), so this function runs on every intercepted CONNECT — and a
+// misconfiguration that never changes would otherwise print on every one of
+// them. Keyed by the value so editing the config still gets an answer.
+let warnedClamp = null;
+
+export async function ensureCerts(host, { config = null, log = () => {} } = {}) {
   const hosts = host === TEST_HOST ? [TEST_HOST] : [host, TEST_HOST];
+  const opts = certOptions(config);
+  if (opts.clamped !== null && warnedClamp !== opts.clamped) {
+    warnedClamp = opts.clamped;
+    log(`[TeamClaude] proxy.certs.renewBeforeDays ${opts.clamped} is not shorter than leafDays ` +
+        `${opts.leafDays}, which would renew on every connection — using ${opts.renewBeforeDays}`);
+  }
   const [caCertPem, leafCertPem, leafKeyPem] = await Promise.all([
     readIf(fpath(CA_CERT)), readIf(fpath(LEAF_CERT)), readIf(fpath(LEAF_KEY)),
   ]);
 
-  if (caCertPem && leafCertPem && leafKeyPem && leafCovers(caCertPem, leafCertPem, hosts)) {
-    return { caPath: fpath(CA_CERT), caCertPem, leafCertPem, leafKeyPem };
+  if (caCertPem && leafCertPem && leafKeyPem) {
+    const problem = certReuseProblem(caCertPem, leafCertPem, hosts, opts);
+    if (!problem) return { caPath: fpath(CA_CERT), caCertPem, leafCertPem, leafKeyPem };
+    log(`[TeamClaude] regenerating the MITM certificate chain: ${problem}`);
+  } else {
+    log(`[TeamClaude] minting a MITM certificate chain for ${hosts.join(', ')} ` +
+        `(${opts.leafDays}-day leaf, renewing ${opts.renewBeforeDays} days early)`);
   }
 
-  const chain = generateCertChain(hosts); // caKeyPem intentionally discarded
+  const chain = generateCertChain(hosts, { leafDays: opts.leafDays }); // caKeyPem intentionally discarded
   await mkdir(certDir(), { recursive: true });
   await atomicWrite(fpath(CA_CERT), chain.caCertPem, 0o644);
   await atomicWrite(fpath(LEAF_CERT), chain.leafCertPem, 0o644);
@@ -108,7 +182,7 @@ export function hostMode(host, config) {
 /**
  * Build a `connect` event handler implementing the terminating MITM described at
  * the top of this file.
- * @param ensureLeaf async () => { key, cert }   // current leaf PEMs
+ * @param ensureLeaf async () => { key, cert }   // current leaf PEMs, re-read per call
  */
 export function createConnectHandler({ config, accountManager, ensureLeaf, logDir = null, hooks = {}, log = () => {}, sx = null, egress = null }) {
   const upstream = config.upstream || 'https://api.anthropic.com';
@@ -128,12 +202,22 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
   // back from the request — means digging through a TLSSocket and, under h2, a
   // Proxy over the session socket. A listener bound to the account is the same
   // information with none of that. The map is bounded by the account count.
+  //
+  // The entry carries the leaf it was minted with. A terminating server bakes
+  // its certificate in at creation, so a memo keyed by pin alone would keep
+  // serving a superseded chain for the life of the process — renewal would
+  // happen on disk and never reach a client (NFR-17.5).
+  //
+  // A superseded server is dropped rather than closed. Sockets already handed to
+  // it keep their session: TLS validates at handshake, measured — traffic flowed
+  // 2s past `notAfter` on an established connection while a new one was refused
+  // (ASM-17) — so a tunnel opened before a renewal is not disturbed by one.
   const serverPromises = new Map();
-  const getServer = (pin = '') => {
-    let p = serverPromises.get(pin);
-    if (p) return p;
-    p = (async () => {
-    const { key, cert } = await ensureLeaf();
+  const getServer = (pin, key, cert) => {
+    const cached = serverPromises.get(pin);
+    if (cached && cached.cert === cert) return cached.promise;
+    const entry = { cert, promise: null };
+    entry.promise = (async () => {
     const srv = http2.createSecureServer({ key, cert, allowHTTP1: true });
     srv.on('request', createProxyRequestListener({ accountManager, upstream, logDir, hooks, sx, holdMs, config, forcedPin: pin || null, egress }));
     // Remote Control's real-time channel is a WebSocket (Upgrade handshake),
@@ -148,11 +232,12 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
       // Don't let a transient cert/disk failure poison the memo forever: drop it
       // so the next intercepted CONNECT retries instead of re-awaiting a cached
       // rejection (which would leave the MITM path dead until a restart).
-      serverPromises.delete(pin);
+      // Only if it is still ours — a renewal may already have replaced it.
+      if (serverPromises.get(pin) === entry) serverPromises.delete(pin);
       throw err;
     });
-    serverPromises.set(pin, p);
-    return p;
+    serverPromises.set(pin, entry);
+    return entry.promise;
   };
 
   return (req, clientSocket, head) => {
@@ -241,7 +326,7 @@ export function createConnectHandler({ config, accountManager, ensureLeaf, logDi
       return;
     }
 
-    getServer(pin || '').then((srv) => {
+    ensureLeaf().then(({ key, cert }) => getServer(pin || '', key, cert)).then((srv) => {
       reply200Raw(clientSocket);
       if (head && head.length) clientSocket.unshift(head);
       srv.emit('connection', clientSocket);

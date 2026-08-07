@@ -190,6 +190,45 @@ test('the plan is internally consistent', () => {
   }
 });
 
+// Building task-1 turned this up: criterion 7 named src/server.js:182 and the
+// scope listed four files, none of them that one. The overlap check above asks
+// whether two tasks in a tier own the same file; nothing asked whether a task
+// owns the files its own criteria point at. A task that cannot be finished
+// inside its scope either edits somebody else's file or silently drops the
+// criterion.
+test('a task owns the files its acceptance criteria name', () => {
+  const plan = JSON.parse(readFileSync(at('docs','plans','m1-plan.json'), 'utf8'));
+  // A path, or a `file.js:182` citation. The second form is what was missed:
+  // criterion 7 wrote `certsPromise (server.js:182)` with no directory, so a
+  // path-shaped match alone would not have caught it.
+  //
+  // Bare names with no line number are deliberately ignored. Criteria refer to
+  // files they are not going to touch — task-0 decides a seam "while
+  // claude-env.js stays pure", task-2 writes the client's own settings.json —
+  // and demanding ownership of those is noise. A line number means somebody
+  // read that code and expects it to change.
+  const PATH = /\b(?:src|test|docs|scripts)\/[A-Za-z0-9._/-]+\.[a-z]+\b/g;
+  const CITED = /(?<![/\w.-])([a-z][a-z0-9-]*\.(?:js|mjs)):\d+/g;
+
+  const unowned = [];
+  let citations = 0;
+  for (const t of plan.tasks) {
+    const owns = (f) => t.scope.some((s) => s === f || f.startsWith(s) || s.startsWith(f));
+    for (const c of t.acceptance_criteria) {
+      for (const f of c.match(PATH) || []) if (!owns(f)) unowned.push(`${t.id}: ${f}`);
+      for (const [, n] of c.matchAll(CITED)) {
+        citations++;
+        if (!t.scope.some((s) => s === n || s.endsWith('/' + n))) unowned.push(`${t.id}: ${n}`);
+      }
+    }
+  }
+  assert.ok(citations > 0 && plan.tasks.some((t) => t.acceptance_criteria.join(' ').match(PATH)),
+    'no criterion names a file or cites a line — this guard would pass by checking nothing');
+  assert.deepEqual([...new Set(unowned)], [],
+    'these tasks are asked for a file they do not own — widen the scope or move the criterion:\n  ' +
+    [...new Set(unowned)].join('\n  '));
+});
+
 // The board is generated from the plan, so it goes stale silently the moment a
 // criterion is added and nobody regenerates it.
 test('the task board matches the plan it came from', () => {

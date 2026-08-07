@@ -645,7 +645,7 @@ async function envCommand() {
   const useMitm = !args.slice(1).includes('--no-mitm');
 
   let caPath = null;
-  if (useMitm) ({ caPath } = await ensureCerts(upstreamHost(config)));
+  if (useMitm) ({ caPath } = await ensureCerts(upstreamHost(config), { config, log: console.error }));
 
   // Same pin as `teamclaude run`, so `eval "$(teamclaude env)"` and `run` agree.
   const account = (process.env.TC_ACCT || '').trim();
@@ -715,7 +715,7 @@ async function runCommand() {
       // even hardcoded api.anthropic.com endpoints (e.g. the design MCP) get the
       // real token injected. claude trusts our MITM leaf via NODE_EXTRA_CA_CERTS.
       const host = upstreamHost(config);
-      const { caPath } = await ensureCerts(host);
+      const { caPath } = await ensureCerts(host, { config, log: console.error });
       // The pin rides in the proxy URL's userinfo, which the client forwards as
       // `Proxy-Authorization: Basic <acct>:<key>` on each CONNECT — the only pin
       // channel an HTTPS_PROXY env var can express. The password slot keeps the

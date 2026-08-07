@@ -175,12 +175,27 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   // test host is answered locally; anything else is blind-tunneled. Certs are
   // minted lazily on the first intercepted CONNECT.
   const mitmHost = (() => { try { return new URL(upstream).hostname; } catch { return 'api.anthropic.com'; } })();
-  let certsPromise = null;
+  // NFR-17.5 — the renewal check must not be memoised for the process lifetime.
+  // It was: this promise resolved once and the chain it captured was served
+  // until a restart, so a shorter certificate lifetime would have made things
+  // worse rather than better. The renewal would happen on disk and never arrive.
+  //
+  // Nothing is cached now. Revalidating costs 0.386 ms — measured, three file
+  // reads and two X.509 parses — against a CONNECT that then does a TLS
+  // handshake, so there is no cache here worth keeping correct. This also
+  // settles ASM-22: `teamclaude run` regenerating a chain (src/index.js) now
+  // reaches a server that is already running.
+  //
+  // The in-flight promise is still shared, so a burst of CONNECTs on a cold
+  // start does one check between them rather than racing to write the same
+  // three files. Clearing it on settle — success or failure — is what keeps
+  // that from becoming a lifetime memo again, and keeps a transient cert error
+  // from wedging the MITM path until a restart.
+  let certsInFlight = null;
   const ensureLeaf = async () => {
-    // Reset the memo on failure so a transient cert error doesn't wedge the MITM
-    // path permanently (a cached rejected promise would re-throw on every CONNECT).
-    certsPromise ||= ensureCerts(mitmHost).catch((err) => { certsPromise = null; throw err; });
-    const c = await certsPromise;
+    certsInFlight ||= ensureCerts(mitmHost, { config, log: console.error })
+      .finally(() => { certsInFlight = null; });
+    const c = await certsInFlight;
     return { key: c.leafKeyPem, cert: c.leafCertPem };
   };
   server.on('connect', createConnectHandler({ config, accountManager, ensureLeaf, logDir, hooks, log: console.error, sx, egress }));

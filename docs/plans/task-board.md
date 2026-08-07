@@ -5,7 +5,7 @@
 - **Agent**: architecture
 - **CLI**: claude
 - **Title**: Decide the three internal seams M1 tasks share
-- **Status**: pending
+- **Status**: done
 - **Priority**: 1
 - **Dependencies**: none
 - **Exposed Skills**: oma-architecture
@@ -24,12 +24,12 @@
 - **Agent**: backend
 - **CLI**: claude
 - **Title**: Renew MITM certificates on age, not only on host mismatch
-- **Status**: pending
+- **Status**: done
 - **Priority**: 2
 - **Dependencies**: task-0
 - **Exposed Skills**: oma-backend
 - **Exposure Fallback**: false
-- **Scope**: src/mitm.js, src/x509.js, test/cert-lifetime.test.js, docs/configuration.md
+- **Scope**: src/mitm.js, src/x509.js, test/cert-lifetime.test.js, docs/configuration.md, src/server.js, src/index.js
 - **Test Approach**: tdd (unit)
 - **Description**: leafCovers() (src/mitm.js:54) checks the CA signature and the SANs and never reads the validity dates, so an expired leaf is reused rather than replaced and every intercepted TLS connection fails with no self-healing. Lifetimes at issuance are CA 3650 days (src/x509.js:141) and leaf 825 days (:151). Implement docs/specs/m1-certificates.md.
 - **Acceptance Criteria**:

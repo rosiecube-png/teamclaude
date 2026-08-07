@@ -84,7 +84,8 @@
       "test_scope": [],
       "tdd_evidence_required": false,
       "test_approach_rationale": "Interface signatures and placement decisions. There is no behaviour to assert -- the behaviour is asserted by the tasks that implement against them.",
-      "alternative_verification": "Every decision names the existing pattern it follows with a file and line, and those citations are checked against the source. A task that finds a seam unusable amends this contract before diverging from it, rather than silently building something else."
+      "alternative_verification": "Every decision names the existing pattern it follows with a file and line, and those citations are checked against the source. A task that finds a seam unusable amends this contract before diverging from it, rather than silently building something else.",
+      "status": "done"
     },
     {
       "id": "task-1",
@@ -110,13 +111,17 @@
         "src/mitm.js",
         "src/x509.js",
         "test/cert-lifetime.test.js",
-        "docs/configuration.md"
+        "docs/configuration.md",
+        "src/server.js",
+        "src/index.js"
       ],
       "scope": [
         "src/mitm.js",
         "src/x509.js",
         "test/cert-lifetime.test.js",
-        "docs/configuration.md"
+        "docs/configuration.md",
+        "src/server.js",
+        "src/index.js"
       ],
       "test_approach": "tdd",
       "test_scope": [
@@ -124,7 +129,8 @@
       ],
       "tdd_evidence_required": true,
       "test_approach_rationale": "Pure date comparison driving a replace-or-reuse decision. createLeaf() takes days at issuance (src/x509.js:146) so a chain with a past notAfter can be minted directly — no clock manipulation, and a useful RED state is trivial.",
-      "alternative_verification": ""
+      "alternative_verification": "",
+      "status": "done"
     },
     {
       "id": "task-2",
@@ -163,7 +169,8 @@
       ],
       "tdd_evidence_required": true,
       "test_approach_rationale": "Merge, idempotence and reversibility are exactly the properties that break silently and are cheap to state as failing tests first. FR-03.4 and FR-03.5 are byte-comparison assertions.",
-      "alternative_verification": ""
+      "alternative_verification": "",
+      "status": "pending"
     },
     {
       "id": "task-3",
@@ -218,7 +225,8 @@
       ],
       "tdd_evidence_required": true,
       "test_approach_rationale": "Security-relevant authorisation and destination decisions. NFR-21.2 in particular is only demonstrable by a test that makes a name answer differently on a second lookup, which forces the resolver seam to be designed rather than retrofitted.",
-      "alternative_verification": ""
+      "alternative_verification": "",
+      "status": "pending"
     },
     {
       "id": "task-4",
@@ -255,7 +263,8 @@
       ],
       "tdd_evidence_required": true,
       "test_approach_rationale": "Response classification is deterministic and asserted directly on the body. The correlation id's log correlation is likewise a direct assertion.",
-      "alternative_verification": ""
+      "alternative_verification": "",
+      "status": "pending"
     },
     {
       "id": "task-5",
@@ -289,7 +298,8 @@
       ],
       "tdd_evidence_required": true,
       "test_approach_rationale": "Detection is a function of the observed request sequence, which a test can feed directly. The undetectable inverse case is documentation, not code, and is carved out in the acceptance criteria.",
-      "alternative_verification": ""
+      "alternative_verification": "",
+      "status": "pending"
     },
     {
       "id": "task-6",
@@ -319,7 +329,8 @@
       "test_scope": [],
       "tdd_evidence_required": false,
       "test_approach_rationale": "A review produces findings, not code. The behaviours it probes are already covered by the tests written in task-3 and task-5; adding a parallel suite here would duplicate them without adding assurance.",
-      "alternative_verification": "Adversarial probing against a running instance, with each attempt and its outcome recorded in .agents/results/result-qa.md. Anything that gets through becomes a failing test in the owning task before the finding is closed. A high-severity finding blocks M1 from closing (NFR-27)."
+      "alternative_verification": "Adversarial probing against a running instance, with each attempt and its outcome recorded in .agents/results/result-qa.md. Anything that gets through becomes a failing test in the owning task before the finding is closed. A high-severity finding blocks M1 from closing (NFR-27).",
+      "status": "pending"
     },
     {
       "id": "task-7",
@@ -354,7 +365,8 @@
       "test_scope": [],
       "tdd_evidence_required": false,
       "test_approach_rationale": "Prose. There is no behaviour to assert.",
-      "alternative_verification": "Every config key, file path and command named in the changed pages is checked against the source; the check is recorded in the PR description."
+      "alternative_verification": "Every config key, file path and command named in the changed pages is checked against the source; the check is recorded in the PR description.",
+      "status": "pending"
     }
   ],
   "api_contracts": [
