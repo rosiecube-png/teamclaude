@@ -9,9 +9,10 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 | | |
 | --- | --- |
-| Requirements | 18 functional, 21 non-functional — §4.1, §4.2 |
+| Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
 | Assumptions | 14 — 6 verified, 7 unverified, 1 known false — §4.3 |
 | Constraints | 10 — §4.4 |
+| Risks | 8 rated, owned, with residual — §10 |
 | Measured findings | 18 — §2 |
 | Backlog | 1 — egress IP, §5 |
 | Standards audit | [iso-audit.md](iso-audit.md) — 11 absent, 3 unclassified |
@@ -66,6 +67,22 @@ That funding gap is a real constraint, not a footnote (CON-08). Several requirem
 — per-tenant egress IPs (NFR-08), KMS-held CA keys (NFR-03), incident response (NFR-15) —
 carry ongoing cost with no revenue against them. Reaching M1 first means that question can
 be answered with a running system rather than an estimate.
+
+### Stakeholders and what they want
+
+Named with their concerns, because two of them want opposite things and the design has to
+know which it is serving.
+
+| Stakeholder | Concern | Where it bites |
+| --- | --- | --- |
+| **Operator** | Runs it, pays for it, carries the on-call | CON-08 — every hardening requirement is their cost |
+| **User of a hosted instance** | Their accounts keep working; their prompts stay private | CON-02, CON-06 — they bear a risk they cannot inspect |
+| **Self-hosting user** | Wants M1 and none of the rest | The mode fork above; most of M2–M4 is overhead to them |
+| **Maintainer of the upstream project** | This is a fork; changes should be contributable back | Keeps M0 fixes separable from hosted-only work |
+
+The operator and the hosted user are in tension: NFR-03, NFR-08 and NFR-15 protect the
+user and are paid for by the operator, with no revenue between them (CON-08). That tension
+is the M4 gate.
 
 ### Success criteria
 
@@ -176,6 +193,41 @@ flowchart LR
 - **Only inference paths take a rotated account token.** Everything else travels on the
   client's own credential.
 
+### Trust boundaries
+
+The view above is the request path. This one is where the data sits and who can reach it —
+the audit asked for it from two directions, as an architecture viewpoint (H-1) and as a
+security asset register (F-1, now §9).
+
+```mermaid
+flowchart TB
+    subgraph U["User's machine — user controls"]
+        C["claude CLI"]
+        K["device.key · tenant-ca.pem"]
+    end
+    subgraph H["Hosting provider — operator controls, provider hosts"]
+        E["Edge · TLS terminates"]
+        B["MITM backend<br/><small>prompts in plaintext, in memory</small>"]
+        S[("Config store<br/><small>refresh tokens</small>")]
+        M[["KMS · tenant CA key"]]
+    end
+    subgraph X["Third parties"]
+        A["Upstream API"]
+        P["sx.org · ciphertext only"]
+    end
+    C --> E --> B
+    K -.trusts.-> B
+    B --> S
+    B -.signs via.-> M
+    B --> A
+    B -.when sx.mode is on.-> P --> A
+```
+
+Two boundaries carry the weight. **User to operator** is crossed by refresh tokens, which
+the user cannot inspect once handed over (CON-06). **Operator to provider** is crossed by
+prompt plaintext, which exists in memory on infrastructure the operator does not own
+(CON-02). Neither is avoidable in the community-hosted mode; both are why §9 exists.
+
 ---
 
 ## 4. Requirements
@@ -232,6 +284,27 @@ says which of these already exist in the codebase.
 | **NFR-19** | Protect the dashboard itself: session handling, and rate limiting on enrolment and login | FR-13 |
 | **NFR-20** | Authenticate every client that is not on loopback, and fail **closed** when no credential is configured | `connectAuthorized` fails open today — `src/mitm.js:294` |
 | **NFR-21** | Constrain where the proxy may open a connection: refuse loopback, link-local and private addresses, restrict the port, and connect to the address that was checked | nothing filters today — `src/mitm.js:197`, `src/server.js:247` |
+| **NFR-22** | Keep the code that tracks the client's behaviour isolated and independently testable, so a release that moves it is a contained change | ASM-10 is **known false**; F03 and F06 each caught the contract moving |
+| **NFR-23** | State a recovery point and recovery time objective, and size the backup mechanism from them | NFR-14 is not implementable without them — §10 |
+| **NFR-24** | Identify every third party that handles user data or traffic, and state what each receives | The cloud host terminates TLS; `sx.mode` relays upstream traffic through a residential proxy provider |
+| **NFR-25** | Maintain a threat model, and revisit it whenever the trust boundary moves | The SSRF surface was found by reading `mitm.js` closely, not by method |
+| **NFR-26** | Where a requirement classifies a range, the tests MUST exercise its boundaries, not only a member of each class | NFR-21.1 sorts addresses into refused and permitted; the defects live at the edges of `127.0.0.0/8`, at `169.254.169.254`, at the `172.16`–`172.31` limits, and in IPv4-mapped IPv6 forms |
+| **NFR-27** | A review finding carries a severity, becomes a failing test in the task that owns the behaviour, and a milestone does not close with an unresolved high finding | Nothing said where a security-review finding goes or what it blocks |
+
+**Quality characteristics covered.** Grouped against ISO/IEC 25010 so the shape of the
+coverage is visible rather than implied — the audit found maintainability missing precisely
+because nothing was classified.
+
+| Characteristic | Entries |
+| --- | --- |
+| Security | NFR-01, 03, 04, 11, 17, 19, 20, 21, 25, 26, 27 |
+| Reliability | NFR-12, 13, 14, 23 |
+| Performance efficiency | NFR-06, 07, 16 |
+| Maintainability | NFR-22 |
+| Compatibility | NFR-10, CON-01, CON-04 |
+| Portability | ASM-07, §8.5 |
+| Usability | FR-17, FR-11 |
+| Functional suitability | the FR register |
 
 ### 4.3 Assumptions — ASM
 
@@ -444,6 +517,19 @@ Not features — the things that make it defensible to run for anyone but yourse
 [#3](../../issues/3) stays **out of every milestone**: it is backlog by decision (§5), and
 giving it one would present it as scheduled work.
 
+### The M4 decision
+
+The audit noted this was written as a note while being the most consequential decision in
+the document (C-1). Stated as a decision:
+
+| | |
+| --- | --- |
+| **Question** | Is the community-hosted mode offered at all? |
+| **Owner** | Repository owner |
+| **Inputs** | R-1 measured with M1 running · R-8 actual cost against actual donations · legal review of R-5 · the incident posture in [#25](../../issues/25) |
+| **Outcomes** | Offer it · offer it with a scope honestly reduced to what one person can carry · do not offer it, and ship self-hostable only |
+| **Not deciding** | is itself an outcome — it leaves M1 shipped and M2–M4 unbuilt, which is a legitimate place to stop |
+
 **Gate.** M4 is where CON-08 has to be answered: NFR-03, NFR-08 and NFR-15 all carry
 ongoing cost against donations. Either this milestone is scoped to what a volunteer can
 carry, or the community-hosted mode is not offered. Legal review belongs here too — see
@@ -543,7 +629,77 @@ Record this as a documented limitation rather than something to solve.
 
 ---
 
-## 9. Appendix
+## 9. Asset and data inventory
+
+Every control in §7 depends on knowing what is held where, and nothing said so until the
+standards audit reached the same gap from two directions — as a missing security asset
+register (F-1) and as a missing architecture information view (H-1).
+
+Classification: **critical** means loss or disclosure is unrecoverable for the user.
+
+| Asset | Where it lives | Class | Retention | Protected by |
+| --- | --- | --- | --- | --- |
+| OAuth refresh tokens | Config store, at rest | **critical** | Life of the account registration; destroyed on offboarding | NFR-04 envelope encryption, NFR-11 audit, FR-14 deletion |
+| OAuth access tokens | Memory; written back on refresh | **critical** | Until expiry | NFR-04 |
+| Tenant CA private key | KMS from M2; discarded today (`src/mitm.js:83`) | **critical** | Life of the tenant | NFR-03 |
+| Device private key | The user's own machine only | high | Life of the device | FR-16.1 owner-only permissions |
+| Proxy API key | Config store | high | Until rotated — **no rotation path today** | NFR-17, [#24](../../issues/24) |
+| **Prompt and file content** | Server memory, in plaintext, buffered whole | **critical** | Discarded after the response — **not persisted** | CON-02, NFR-05 logging off by default |
+| Request logs, when enabled | Disk | **critical** — contains the above | Short, automatic deletion | NFR-05, NFR-18 residency |
+| Observed quota state | Disk, `teamclaude.state.json` | low | Disposable; re-learned from traffic | — |
+| Account identity, org names | Config store | medium | Life of the registration | NFR-11 |
+
+**Traffic that leaves without being held.** Blind-tunnelled destinations (FR-07.3) are
+spliced, never inspected — CON-09 records that this is by design, which also means it is
+outside every guarantee in this table.
+
+### Third parties — NFR-24
+
+| Party | Receives | When |
+| --- | --- | --- |
+| The hosting provider | Everything in this table; TLS terminates on their infrastructure | Always, community-hosted |
+| sx.org | Upstream traffic, as ciphertext — TLS is end-to-end through their tunnel | Only when `sx.mode` is `always` or after a 429 |
+| The upstream API | Prompts, and the account token being used | Always — this is the product |
+
+sx.org sees ciphertext, not content. It is listed because relaying a user's traffic is a
+data-processing relationship regardless of what is visible in it.
+
+---
+
+## 10. Risk register
+
+The audit found risks identified and treated, but never rated, ordered, owned, or followed
+by a statement of what the treatment leaves behind (B-1, B-2, B-3).
+
+**L** likelihood · **I** impact, each low / medium / high.
+
+| | Risk | L | I | Treatment | Residual | Owner | Review when |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **R-1** | Limits key on the egress IP, so pooling accounts behind one address yields no multiple — the product premise | M | **H** | `egress.pin` holds; `sx.mode` retries from another IP | **Metered per-GB spend against donations** (CON-08) | Operator | M1 running, first real traffic |
+| **R-2** | The allowlist refuses a host a real session needs | M | M | FR-07.5 composes it by running a client and recording refusals | **Interactive mode is unmeasured** (ASM-08, ASM-14), so the list is incomplete by construction | Operator | Any client release; first interactive use |
+| **R-3** | A client release moves the behaviour this design rests on | **H** | **H** | NFR-10 canary before adopting a release as the floor; NFR-22 isolates the tracking code | Detection is reactive — the canary runs after the release exists | Operator | Every client release |
+| **R-4** | The upstream response contract changes and quota tracking degrades **silently** | M | **H** | None today — ASM-11 is unverified and nothing watches for it | **Untreated.** The failure is silent, which is what makes it worse than R-3 | Operator | — none defined |
+| **R-5** | Credential custody is read as prohibited under the consumer terms | L | **H** | Self-hostable build; explicit consent; NFR-11 audit | Interpretation is not the operator's to make; legal review is advisory | Owner | Before community-hosted launch |
+| **R-6** | Plaintext prompts in server memory are disclosed | L | **H** | NFR-05 logging off, NFR-15 incident process, short retention | **Unavoidable while TLS terminates in the cloud** (CON-02) | Operator | On any incident; M4 gate |
+| **R-7** | An operator deliberately opens a hardening switch and is compromised | L | M | Defaults derive from `proxy.host`, so the unsafe state needs intent | **No guard rail against the deliberate case** | Operator | — |
+| **R-8** | Donations do not cover KMS, dedicated egress and on-call | **H** | M | Scope M4 to what a volunteer can carry, or do not offer hosting | This is the M4 gate, not a risk to mitigate away | Owner | M4 gate |
+
+**R-4 is the one to act on.** It is the only high-impact risk with no treatment at all, and
+its failure mode is silence — rotation degrades and nothing reports it. R-3 at least
+announces itself when a canary fails.
+
+**R-1 and R-8 are the same question** seen from two sides: whether the economics work. Both
+resolve at the M4 gate, and both are answerable only with M1 running.
+
+### Review
+
+Risks are reviewed at each milestone gate, and on any client or upstream release. R-4 has
+no trigger because nothing detects it — closing that is what a treatment for R-4 would
+mean.
+
+---
+
+## 11. Appendix
 
 ### Reproducing the measurements
 

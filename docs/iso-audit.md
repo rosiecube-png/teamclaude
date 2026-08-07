@@ -230,24 +230,31 @@ rather than overlooked.
 
 ## Findings summary
 
-| | Finding | Standard | Kind |
-| --- | --- | --- | --- |
-| **A-1** | Stakeholder concerns not recorded | 21500 | Unclassified |
-| **B-1** | Residual risk never stated | 31000 | **Absent** |
-| **B-2** | No likelihood or impact, so risks cannot be ordered | 31000 | **Absent** |
-| **B-3** | No review trigger for assumptions that change externally | 31000 | **Absent** |
-| **C-1** | The M4 go/no-go is a note, not a decision with an owner | 38500 | **Absent** |
-| **D-1** | Maintainability has no requirement | 25010 | **Absent** |
-| **D-2** | Seven of eight quality characteristics unlabelled | 25010 | Unclassified |
-| **E-1** | Boundary-value coverage not required where it matters most | 29119 | **Absent** |
-| **E-2** | No defect severity or milestone gating | 29119 | **Absent** |
-| **F-1** | No asset / data inventory | 27001 | **Absent** |
-| **F-2** | Third parties unaddressed — the cloud host and sx.org | 27001 | **Absent** |
-| **F-3** | No threat model; SSRF was found by attention, not method | 27001 | **Absent** |
-| **G-1** | No RTO / RPO, so NFR-14 is not implementable as written | 22301 | **Absent** |
-| **H-1** | Single architecture viewpoint; no deployment or information view | 42010 | **Absent** |
+| | Finding | Standard | Kind | Closed by |
+| --- | --- | --- | --- | --- |
+| **A-1** ✅ | Stakeholder concerns not recorded | 21500 | Unclassified | §0 stakeholder concerns |
+| **B-1** ✅ | Residual risk never stated | 31000 | **Absent** | §10 residual column |
+| **B-2** ✅ | No likelihood or impact, so risks cannot be ordered | 31000 | **Absent** | §10 L/I rating |
+| **B-3** ✅ | No review trigger for assumptions that change externally | 31000 | **Absent** | §10 review triggers |
+| **C-1** ✅ | The M4 go/no-go is a note, not a decision with an owner | 38500 | **Absent** | §6 M4 decision |
+| **D-1** ✅ | Maintainability has no requirement | 25010 | **Absent** | NFR-22 |
+| **D-2** ✅ | Seven of eight quality characteristics unlabelled | 25010 | Unclassified | §4.2 grouping |
+| **E-1** ✅ | Boundary-value coverage not required where it matters most | 29119 | **Absent** | NFR-26 |
+| **E-2** ✅ | No defect severity or milestone gating | 29119 | **Absent** | NFR-27 |
+| **F-1** ✅ | No asset / data inventory | 27001 | **Absent** | §9 inventory |
+| **F-2** ✅ | Third parties unaddressed — the cloud host and sx.org | 27001 | **Absent** | NFR-24 + §9 |
+| **F-3** ✅ | No threat model; SSRF was found by attention, not method | 27001 | **Absent** | NFR-25 |
+| **G-1** ✅ | No RTO / RPO, so NFR-14 is not implementable as written | 22301 | **Absent** | NFR-23 |
+| **H-1** ✅ | Single architecture viewpoint; no deployment or information view | 42010 | **Absent** | §3 trust boundaries + §9 |
 
-**11 absent, 3 unclassified.**
+**11 absent, 3 unclassified — all 14 closed** in the same commit that added this audit's
+follow-up. The register grew from 18 FR / 21 NFR / 14 ASM / 10 CON to add **NFR-22 … NFR-27**,
+an **asset and data inventory** (§9), and a **risk register** (§10) carrying likelihood,
+impact, owner, residual and review trigger for eight risks.
+
+Closing them is not the same as discharging them. **R-4 remains untreated** — the upstream
+response contract can change and degrade rotation silently, and nothing watches for it. It
+is now visible and owned, which is the difference between a gap and a known risk.
 
 ## What the pattern says
 
