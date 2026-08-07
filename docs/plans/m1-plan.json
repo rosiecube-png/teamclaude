@@ -179,7 +179,7 @@
         "FR-07.1 — every destination is classified intercept, tunnel or refuse, defaulting to refuse",
         "FR-07.2 — intercept applies only to the configured upstream host",
         "FR-07.3 — tunnel applies only to an allowlist held as configuration data",
-        "FR-07.4 — a refusal answers 403 naming the host and opens no socket to it",
+        "FR-07.4 — a refused CONNECT answers 403 and opens no socket; a refusal on the request path answers 400, not 403 (measured: 403 makes the client print \"Failed to authenticate\", 502 is retried)",
         "FR-07.5 — the shipped allowlist is composed by running a client with it active; each entry records why it is there; what was refused during that run is recorded in the PR",
         "FR-07.6 — the www.example.org intercept is removable, and off by default when proxy.host is not loopback",
         "NFR-20.1 — a non-loopback proxy.host with no proxy.apiKey fails at startup naming the missing setting",
@@ -236,7 +236,8 @@
         "FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request",
         "NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly",
         "Existing 403, 429 and pin tests still pass unchanged",
-        "The message carries the whole story on its own — error.type may reach the operator and not the user (ASM-29)"
+        "The message carries the whole story on its own — error.type may reach the operator and not the user (ASM-29)",
+        "FR-17.1 — the message carries the whole story; error.type does not reach the user (ASM-29, measured)"
       ],
       "artifacts_expected": [
         "src/server.js",
@@ -459,7 +460,8 @@
       "task-0 added: the three shared internal seams are contracted before implementation",
       "eight hidden assumptions surfaced (ASM-15..22); NFR-17.5, NFR-21.5, NFR-21.6 added; NFR-17.4 removed from owner approvals",
       "ASM-23..30: crash log and quota state added to the inventory, log retention corrected to a target, FR-16.3 added, the 403 tension recorded",
-      "ASM-39..42: the client version is measured on the rotation path; deferred is added as an evidence class for claims taken from vendor documentation"
+      "ASM-39..42: the client version is measured on the rotation path; deferred is added as an evidence class for claims taken from vendor documentation",
+      "ASM-23/29/43 measured: refusals are 400 on the request path, 403 only on CONNECT; error.type is operator-facing"
     ]
   }
 }

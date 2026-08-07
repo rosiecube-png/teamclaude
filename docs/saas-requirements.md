@@ -10,7 +10,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 | | |
 | --- | --- |
 | Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
-| Assumptions | 42 — 11 measured, 8 source-read, 3 deferred, 19 unverified or false — §4.3 |
+| Assumptions | 43 — 14 measured, 8 source-read, 4 deferred, 17 unverified or false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Risks | 8 rated, owned, with residual — §10 |
 | Measured findings | 18 — §2 |
@@ -363,13 +363,13 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-20** | A hostname resolves to addresses of one kind | ❌ **unverified** — `lookup(host, {all:true})` can return public and private together. Whether any private address refuses, or a public one may be chosen, is unstated |
 | **ASM-21** | Allowlist entries are exact hostnames | ❌ **unverified** — nothing says whether `*.claude.ai` is expressible, and the client reaches several `claude.ai` and `anthropic.com` names |
 | **ASM-22** | The certificate directory has one writer | ❌ **unverified** — `ensureCerts` is also called from the CLI (`src/index.js:648`, `:718`), so `teamclaude run` can regenerate while a server holds a memo of the old chain |
-| **ASM-23** | Returning `403` for a refused destination is safe | ⚠️ **partly measured** — `src/server.js` deliberately does *not* pass an upstream 403 to the client, because "Claude Code reads a 403 as your session is dead". F09 refused CONNECTs with 403 and the client carried on, so the lesson does not appear to reach the CONNECT path — but that was one `-p` run, and the contract never acknowledged the tension |
+| **ASM-23** | Returning `403` for a refused destination is safe | ❌ **measured false on the request path** — a 403 carrying our envelope produced *"Failed to authenticate."* before the message, which is the misreading `src/server.js` already avoids. On the **CONNECT** path 403 is fine (F09). The contract now uses `400` on the request path, matching the blocked-model precedent (`src/server.js:471`) |
 | **ASM-24** | Prompt content is never persisted | ❌ **false** — `src/crash-log.js` writes `err.stack` on a fatal error, and its own comment says "a stack can carry request context". Mode `0600`, but §9 did not list it |
 | **ASM-25** | Request logs are short-lived | ❌ **false** — nothing deletes them. `grep` for `unlink`, `rmSync`, `retention`, `prune` across `src/server.js` and `src/request-log.js` finds nothing; `logDir` grows without bound. §9's retention column described the requirement, not the code |
 | **ASM-26** | The quota state file is low-sensitivity and disposable | ❌ **false** — `exportQuotaState` (`src/account-manager.js:1276`) writes `accountUuid`, `orgUuid`, `orgName` and `name` beside the counters, and the display name is derived from the account email. It carries identity, not just quota |
 | **ASM-27** | The device private key only ever exists on the user's machine | ❌ **unverified** — FR-16.1 says enrolment "places" `device.key`, without saying who generates it. If the server mints the pair and sends both, the server held the private key and §9's classification is wrong. A key generated on the device with only a CSR leaving it would hold; nothing states which |
 | **ASM-28** | A partial unenrol degrades safely | ✅ **measured** — with the proxy removed and `NODE_EXTRA_CA_CERTS` left pointing at a deleted file, the client warned (`Ignoring extra certs … load failed`) and continued. The dangling half does not block direct operation |
-| **ASM-29** | Clients act on `error.type` | ❌ **unverified** — FR-17.1 requires each failure to carry a distinct `error.type`, and nothing confirms the client surfaces or branches on it rather than showing `message` alone. If only `message` reaches the user, the discriminator serves the operator and not them |
+| **ASM-29** | Clients act on `error.type` | ❌ **measured false** — the client printed the `message` verbatim and showed no sign of the type. FR-17.1's discriminator is an operator and log affordance; the `message` has to carry the whole story |
 | **ASM-30** | The certificate directory is written by one process | ❌ **unverified** — same as ASM-22, restated at the file level: `ensureCerts` does an atomic write per file (`src/mitm.js`), so two writers can interleave a CA from one run with a leaf from another |
 | **ASM-31** | Session affinity cannot cross tenants | ❌ **unverified** — sessions are keyed by `x-claude-code-session-id`, a header the **client** supplies (`src/server.js:407`), and the map lives on `AccountManager` (`recordSession`, `:364`). It holds only if the per-tenant `AccountManager` in [#4](../../issues/4) also scopes the session map. Nothing says so, and G-3 does not list it |
 | **ASM-32** | Quota state is current when the process dies | ❌ **false** — it is written on an interval (`persistQuotaState`, `src/index.js:188`), not on change, so up to one interval is lost. Relevant to NFR-23: the RPO differs by asset, and only tokens are written as they change |
@@ -383,6 +383,7 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-40** | The version is the only client identity on that path | ❌ **false, and useful** — the same request carries `x-stainless-package-version`, `x-stainless-runtime-version` and `anthropic-beta` with dated feature flags. A canary (NFR-10) can watch the beta list and the SDK version, not just the CLI version, and those move independently |
 | **ASM-41** | `downloads.claude.ai` carries self-update | ⚠️ **deferred** — vendor network documentation. Testing it needs a version-behind client and a real update cycle, which one run cannot produce. FR-07.3 allowlists it on that basis |
 | **ASM-42** | The client's SSE watchdog thresholds are 180s / 300s | ⚠️ **deferred** — vendor documentation. NFR-07 sizes the edge timeout against numbers never observed here |
+| **ASM-43** | A `502` refusal would be a safe alternative | ❌ **measured false** — with the same body under `502` the client showed nothing immediately and retried, for a destination that will never be allowed. Retrying a policy decision is worse than reporting it |
 | **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
 
 ### 4.4 Constraints — CON

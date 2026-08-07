@@ -136,8 +136,15 @@ The client reaches several names under `claude.ai` and `anthropic.com` (ASM-21).
 would be convenient and would also admit any host an attacker can get named under those
 zones, so exact entries are the safe default until there is a reason to widen them.
 
-> **FR-07.4** A refused CONNECT MUST answer `403` with a body naming the host, and MUST NOT
-> open a socket to it.
+> **FR-07.4** A refused CONNECT MUST answer `403` with a status line naming nothing beyond
+> the refusal, and MUST NOT open a socket to it. A refusal on the **request** path MUST
+> answer `400`, not `403`.
+
+The split is measured, not stylistic. A `403` carrying the error envelope made the client
+print *"Failed to authenticate."* before the message — the misreading `src/server.js`
+already works around. A `502` was retried, for a destination that will never be allowed.
+`400` printed the message cleanly, and is what this codebase already returns for a blocked
+model (`src/server.js:471`). See the [error envelope](../plans/contracts/m1-error-envelope.md).
 
 The allowlist has to be *composed*, not guessed. **F09 measured only that telemetry hosts
 can be refused safely** — the client carried on. It does not generalise: a background agent
@@ -256,7 +263,8 @@ position. This is the mechanism behind NFR-20.1, NFR-20.2 and FR-07.6.
 | | Asserts |
 | --- | --- |
 | An allowlisted host is tunnelled | FR-07.3 |
-| A non-allowlisted host gets `403` and **no socket is opened** | FR-07.1, FR-07.4 |
+| A non-allowlisted CONNECT gets `403` and **no socket is opened** | FR-07.1, FR-07.4 |
+| A non-allowlisted target on the request path gets `400`, not `403` | FR-07.4 |
 | The upstream host is still intercepted, not tunnelled | FR-07.2 |
 | A name resolving to `127.0.0.1` / `169.254.169.254` / RFC1918 is refused even when allowlisted | NFR-21.1 |
 | A name resolving to both a public and a private address is refused | NFR-21.5 |

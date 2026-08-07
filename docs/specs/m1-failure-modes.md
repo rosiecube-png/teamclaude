@@ -70,7 +70,11 @@ and it exists only as an implication.
 ### 3.1 Legible failure
 
 > **FR-17.1** Every failure the proxy originates MUST be distinguishable from every other by
-> its response body, and MUST NOT be reported as a generic proxy error.
+> its response body, and MUST NOT be reported as a generic proxy error. The **message** MUST
+> carry the whole story, because `error.type` does not reach the user.
+
+Measured (ASM-29): the client prints `message` verbatim and shows no sign of the type. The
+discriminator is for the operator and the logs.
 
 At minimum: upstream unreachable · all accounts exhausted · credential refused · destination
 refused · client version too old · proxy internal fault.

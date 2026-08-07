@@ -63,6 +63,7 @@
   - FR-16.1 — places tenant-ca.pem, device.crt and device.key, private key owner-readable only
   - Tests use a fixture settings file carrying unrelated keys, not an empty object
   - FR-03.3 — a settings.json containing comments still has them afterwards (ASM-18: comments are accepted by the client, and JSON.parse/stringify drops them silently)
+  - FR-16.3 — the device private key is generated on the device; only a CSR leaves it (ASM-27 left the generator unstated)
 
 ### task-3
 - **Agent**: backend
@@ -80,7 +81,7 @@
   - FR-07.1 — every destination is classified intercept, tunnel or refuse, defaulting to refuse
   - FR-07.2 — intercept applies only to the configured upstream host
   - FR-07.3 — tunnel applies only to an allowlist held as configuration data
-  - FR-07.4 — a refusal answers 403 naming the host and opens no socket to it
+  - FR-07.4 — a refused CONNECT answers 403 and opens no socket; a refusal on the request path answers 400, not 403 (measured: 403 makes the client print "Failed to authenticate", 502 is retried)
   - FR-07.5 — the shipped allowlist is composed by running a client with it active; each entry records why it is there; what was refused during that run is recorded in the PR
   - FR-07.6 — the www.example.org intercept is removable, and off by default when proxy.host is not loopback
   - NFR-20.1 — a non-loopback proxy.host with no proxy.apiKey fails at startup naming the missing setting
@@ -116,6 +117,8 @@
   - FR-17.3 — a non-actionable failure carries an 8-hex correlation id in the message and the same id appears in the server log for that request
   - NFR-13.2 — unenrol is documented as the recovery step when the service is unreachable, and leaves a machine reaching the upstream directly
   - Existing 403, 429 and pin tests still pass unchanged
+  - The message carries the whole story on its own — error.type may reach the operator and not the user (ASM-29)
+  - FR-17.1 — the message carries the whole story; error.type does not reach the user (ASM-29, measured)
 
 ### task-5
 - **Agent**: backend
