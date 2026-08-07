@@ -458,7 +458,8 @@
       "NFR-06 added to task-3 — the new resolve-check-connect step is a latency risk",
       "task-0 added: the three shared internal seams are contracted before implementation",
       "eight hidden assumptions surfaced (ASM-15..22); NFR-17.5, NFR-21.5, NFR-21.6 added; NFR-17.4 removed from owner approvals",
-      "ASM-23..30: crash log and quota state added to the inventory, log retention corrected to a target, FR-16.3 added, the 403 tension recorded"
+      "ASM-23..30: crash log and quota state added to the inventory, log retention corrected to a target, FR-16.3 added, the 403 tension recorded",
+      "ASM-39..42: the client version is measured on the rotation path; deferred is added as an evidence class for claims taken from vendor documentation"
     ]
   }
 }

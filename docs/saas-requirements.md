@@ -10,7 +10,7 @@ could not be measured is recorded as open rather than filled in with a guess.
 | | |
 | --- | --- |
 | Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
-| Assumptions | 38 — 9 verified, 18 unverified, 10 known false, 1 imprecise — §4.3 |
+| Assumptions | 42 — 11 measured, 8 source-read, 3 deferred, 19 unverified or false — §4.3 |
 | Constraints | 10 — §4.4 |
 | Risks | 8 rated, owned, with residual — §10 |
 | Measured findings | 18 — §2 |
@@ -236,6 +236,18 @@ Four registers, plus the risk register in §10. Every entry traces to a finding,
 implementation, or an issue — nothing here is stated without a source. The gap analysis in
 §4.5 says which already exist in the codebase.
 
+**Evidence classes.** Every ASM entry carries one, because the first sweep treated a
+citation as verification and a citation to someone else's documentation is not that.
+
+| Class | Means | Can it be wrong? |
+| --- | --- | --- |
+| **measured** | A run against a real client here | Only if the run was unrepresentative |
+| **source-read** | Read out of this repository, with a line cited | No, for the state of that line |
+| **deferred** | Taken from vendor documentation and never tested here | **Yes** — it bounds what we support on someone else's word |
+| **unverified** | Asserted, with nothing behind it | Yes |
+
+`deferred` is the class that hid: three claims sat behind links and read as settled.
+
 **Identifiers.** One scheme, declared here so nothing invents another. A sub-requirement
 extends its parent (`FR-07.3`) rather than opening a new space — the specs under
 [`specs/`](specs/) decompose these IDs, they do not replace them.
@@ -363,10 +375,14 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-32** | Quota state is current when the process dies | ❌ **false** — it is written on an interval (`persistQuotaState`, `src/index.js:188`), not on change, so up to one interval is lost. Relevant to NFR-23: the RPO differs by asset, and only tokens are written as they change |
 | **ASM-33** | "No resident process" describes the client machine | ⚠️ **imprecise** — F15 measured the client cold-starting its own supervisor daemon for background agents. The claim is true of **our** software and false of the machine; §1 and G-1 do not distinguish |
 | **ASM-34** | A config edited while the server runs is picked up | ⚠️ **partly** — `POST /teamclaude/reload` and `atomicConfigUpdate` cover accounts and the sx key (`src/index.js:249`). Whether the M1 additions — the allowlist, certificate lifetimes — are reloadable is unstated, and they are the settings an operator most wants to change under load |
-| **ASM-35** | The client cannot chain proxies (CON-01) | ❌ **unverified** — derived from the documented variable set, never tested. If some form of chaining exists, CON-01's "cannot use the service" is too strong and an enterprise user is being turned away on a reading |
-| **ASM-36** | Cloud sessions ignore the certificate variables (CON-04) | ❌ **unverified** — taken from the vendor's network documentation; no cloud session was ever run here. It bounds what the product supports, so it is worth more than a citation |
+| **ASM-35** | The client cannot chain proxies (CON-01) | ⚠️ **deferred** — derived from the documented variable set, never tested. If some form of chaining exists, CON-01's "cannot use the service" is too strong and an enterprise user is being turned away on a reading |
+| **ASM-36** | Cloud sessions ignore the certificate variables (CON-04) | ⚠️ **deferred** — taken from the vendor's network documentation; no cloud session was ever run here. It bounds what the product supports, so it is worth more than a citation |
 | **ASM-37** | Buffers are short-lived, so "discard immediately after the response" is nearly true today | ❌ **false** — the body is buffered whole so it can be replayed on another account, so it is held across **every retry**, and `holdSeconds` keeps it for the entire wait while all accounts are exhausted (`src/server.js:445`). The window is bounded by the hold budget, not by the response |
 | **ASM-38** | Crash reporting does not capture request bodies, as §7 requires | ❌ **false today** — `src/crash-log.js` writes `err.stack`, and its own comment says a stack can carry request context. §7 stated the requirement as though it described the code (see also ASM-24) |
+| **ASM-39** | The client version reaches the rotation path | ✅ **measured** — `user-agent: claude-cli/2.1.223 (external, sdk-cli)` on `POST /v1/messages`, alongside `x-app: cli`. FR-10's carrier is confirmed, and it was an assumption until this run |
+| **ASM-40** | The version is the only client identity on that path | ❌ **false, and useful** — the same request carries `x-stainless-package-version`, `x-stainless-runtime-version` and `anthropic-beta` with dated feature flags. A canary (NFR-10) can watch the beta list and the SDK version, not just the CLI version, and those move independently |
+| **ASM-41** | `downloads.claude.ai` carries self-update | ⚠️ **deferred** — vendor network documentation. Testing it needs a version-behind client and a real update cycle, which one run cannot produce. FR-07.3 allowlists it on that basis |
+| **ASM-42** | The client's SSE watchdog thresholds are 180s / 300s | ⚠️ **deferred** — vendor documentation. NFR-07 sizes the edge timeout against numbers never observed here |
 | **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
 
 ### 4.4 Constraints — CON
@@ -645,7 +661,7 @@ the design assumes.
 | --- | --- |
 | Minimum supported version, published | Below it, refuse with an error naming the version and how to update |
 | Detect the client version per request | The user agent is the obvious carrier; confirm it reaches the rotation path |
-| Version canary before adopting a release | A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it |
+| Version canary before adopting a release | A release that changes which paths carry a device certificate, or how a proxy URL is honoured, must be caught before users hit it. Watch more than the CLI version: the same request carries `x-stainless-package-version` and a dated `anthropic-beta` list, and those move independently (ASM-40) |
 
 The canary is the durable half. Pinning to "latest" trades an old-client problem for a
 new-client one: the client can change under the service at any time, so the measurements
@@ -790,6 +806,38 @@ Repeat across the environment axes: client version, injection method (shell vs
 Both are §8.5. Everything else once listed here has since been measured or resolved:
 background agents (F15–F17), concurrent sessions on one account (F18), and corporate
 proxy nesting (§8.6, a limitation rather than an open question).
+
+### What the assumption sweep can and cannot establish
+
+Forty-two assumptions were recovered from documents that read as fact. The method that
+found them, and its limits, so the next sweep does not repeat the same hole.
+
+**The method.** Extract every absolute claim about behaviour — `never`, `nothing`, `only`,
+`cannot`, `every` — and classify each by what stands behind it. 71 were found across the
+specs and contracts.
+
+**The hole in the first pass.** Only *unsourced* claims were checked. A claim with a
+citation was treated as settled — but a citation to vendor documentation is deference, not
+verification. Three claims sat behind links and read as established: CON-01, CON-04, and
+`downloads.claude.ai` carrying self-update. They are now the `deferred` class.
+
+**What this cannot do.**
+
+| | |
+| --- | --- |
+| Prove exhaustion | No count of found assumptions bounds the unfound ones. "The sweep stopped producing new results" is a statement about the sweep |
+| Verify an absence in a closed binary | CON-01 claims the client has *no* chaining mechanism. That can be bounded by the documented surface and never proven from outside |
+| Survive a change | Every `source-read` entry is true of a line at a commit. The code moves; ASM-10 already records that the client does too |
+| Reach what was never written down | Six of these were found by **measuring**, not by reading — ASM-17, ASM-28, ASM-32, ASM-36, ASM-37, ASM-39. A text sweep cannot find an assumption nobody wrote a sentence about |
+
+That last row is the real limit. The sweep finds assumptions that were *stated*
+carelessly. Assumptions that were never stated at all only surface when something is run,
+which is why measurement kept producing findings after the reading had gone quiet.
+
+**What is enforced instead.** `test/requirements-coverage.test.js` requires every ASM entry
+to carry a verdict and its grounds. That does not prove the set is complete; it makes an
+unchecked entry fail a run rather than sit quietly, which is the difference between a gap
+and a known gap.
 
 ### Findings resting on a single observation
 

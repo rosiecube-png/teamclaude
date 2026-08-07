@@ -99,8 +99,8 @@ test('every assumption carries a verification status', () => {
     const id = cells[1].replace(/\*/g, '');
     const status = cells[3] || '';
     assert.ok(/[✅❌⚠️]/.test(status),
-      `${id}: an assumption without a verdict is one nobody has checked — mark it verified, ` +
-      'unverified, false or imprecise');
+      `${id}: an assumption without a verdict is one nobody has checked — mark it measured, ` +
+      'source-read, deferred, unverified or false');
     assert.ok(status.length > 12, `${id}: say what the verdict rests on, not just the symbol`);
   }
 });
