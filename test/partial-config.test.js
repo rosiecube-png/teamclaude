@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,7 +23,7 @@ import { join } from 'node:path';
 // background agents never reach the proxy at all and produce no signal there by
 // definition.
 
-const { checkEnrolment, enrol, MANAGED_KEYS, MARKER } = await import('../src/enrol.js');
+const { checkEnrolment, enrol, MANAGED_KEYS, ROUTING_KEYS, MARKER } = await import('../src/enrol.js');
 
 function sandbox() {
   const dir = mkdtempSync(join(tmpdir(), 'tc-partial-'));
@@ -47,7 +47,11 @@ test('FR-18.1 — a fully enrolled machine reports no problem', async () => {
     const r = await checkEnrolment(s.opts);
     assert.deepEqual(r.problems, [], 'a correct enrolment was reported as broken');
     assert.equal(r.complete, true);
-    assert.deepEqual(r.settings.keys.slice().sort(), MANAGED_KEYS.slice().sort());
+    // The routing keys are always written. The artifact keys are written only
+    // when the artifact they name has content: an edge holding a public
+    // certificate leaves no tenant CA, and mTLS is not enforced until #6.
+    for (const k of ROUTING_KEYS) assert.ok(r.settings.keys.includes(k), `${k} was not written`);
+    assert.deepEqual(r.settings.keys.filter((k) => !MANAGED_KEYS.includes(k)), []);
     assert.equal(r.shell.present, true);
   } finally { s.drop(); }
 });
@@ -92,7 +96,8 @@ test('a half-written settings env is a problem, not a pass', async () => {
     writeFileSync(s.opts.settingsPath, JSON.stringify({ env: { HTTPS_PROXY: PROXY } }, null, 2));
     const r = await checkEnrolment(s.opts);
     assert.equal(r.complete, false);
-    assert.match(r.problems.join('\n'), /missing .*NODE_EXTRA_CA_CERTS/);
+    assert.match(r.problems.join(' '), /missing .*NO_PROXY/,
+      'a settings file holding only HTTPS_PROXY is not configured, and the report must name what is absent');
   } finally { s.drop(); }
 });
 
@@ -114,9 +119,12 @@ test('a settings.json with comments is read, not rejected', async () => {
   try {
     mkdirSync(s.opts.artifactDir, { recursive: true });
     await enrol({ proxyUrl: PROXY, ...s.opts });
-    const withComments = `{\n  // mine\n  "theme": "dark",\n  "env": {\n` +
-      MANAGED_KEYS.map((k) => `    ${JSON.stringify(k)}: "x"`).join(',\n') + '\n  }\n}\n';
-    writeFileSync(s.opts.settingsPath, withComments);
+    // The real enrolled file with a comment put back on top of it, rather than a
+    // hand-built one: the check verifies that a referenced artifact exists, so a
+    // fixture pointing every key at "x" would be reporting a broken machine
+    // correctly rather than exercising the comment handling.
+    const enrolled = readFileSync(s.opts.settingsPath, 'utf8');
+    writeFileSync(s.opts.settingsPath, enrolled.replace('{', '{\n  // mine'));
     const r = await checkEnrolment(s.opts);
     assert.equal(r.settings.present, true, 'the comment made the env block unreadable');
     assert.deepEqual(r.problems, []);

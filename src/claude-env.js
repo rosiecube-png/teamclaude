@@ -40,7 +40,25 @@ export function buildClaudeEnvLines({ port, useMitm = true, caPath = null, holdS
   const pin = (account || '').trim();
 
   if (useMitm) {
-    const userinfo = pin ? `${encodePinComponent(pin)}:${encodePinComponent(proxyApiKey || '')}@` : '';
+    // Userinfo carries the account pin and the proxy key. With a pin it is
+    // `pin:key@`; with only a key it is `key@`, which is the documented remote
+    // form (`--proxy http://<key>@host:port`) and what `resolveConnectPin` reads
+    // back. Emitting nothing when there is a key but no pin is what left an
+    // enrolled machine getting 407 from its own proxy.
+    // Both slots are always filled when there is a key, and that is measured.
+    // Claude Code **silently ignores** a proxy URL whose userinfo has only one
+    // component: `https://<key>@host` and `https://<key>:@host` produced no
+    // request at all — no error, no traffic reaching the proxy, the run simply
+    // timed out. `https://<key>:<key>@host` worked. Only `user:pass@` is used.
+    //
+    // The username carries the pin when there is one and the key otherwise,
+    // which is what `resolveConnectPin` reads; the password always carries the
+    // key, which is what `connectAuthorized` checks. So with no pin the key
+    // occupies both, and every reader gets what it looks for.
+    const key = (proxyApiKey || '').trim();
+    const userinfo = key
+      ? `${encodePinComponent(pin || key)}:${encodePinComponent(key)}@`
+      : (pin ? `${encodePinComponent(pin)}:@` : '');
     const proxyUrl = `${scheme}://${userinfo}${host}:${port}`;
     lines.push(
       `export HTTPS_PROXY=${proxyUrl}`,

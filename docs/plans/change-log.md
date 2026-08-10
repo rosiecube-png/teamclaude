@@ -697,6 +697,88 @@ why.
 
 ---
 
+## 2026-08-10 — G-1 demonstrated, and what demonstrating it found
+
+M1's declared exit is **G-1** and **G-6**, not "eight tasks done". Standing a hosted proxy
+up and enrolling a machine against it is the only thing that checks the first.
+
+**It passes.** A client on this machine, configured only by enrolment, returned `G1-OK`
+through a proxy on another host, with **0 teamclaude processes** among the 23 node
+processes running here.
+
+Getting there found three defects and one constraint. Every one of them was invisible to a
+green suite.
+
+| | |
+| --- | --- |
+| Register | FR-03.2 now requires the credential to survive enrolment; FR-16.1 now forbids configuring an empty artifact |
+| Test | `test/enrol.test.js` — five cases, each pinned by mutation |
+| Docs | `teamclaude enrol --ca <file>` in `--help` |
+| Others | n/a — no requirement was withdrawn, three were found to be under-specified |
+
+### 1 — an enrolled machine could not reach its own proxy
+
+`enrol()` never carried the proxy key. A hosted proxy requires it for every non-loopback
+client, so the machine it had just configured got **407** on everything.
+
+```
+CONNECT as enrolled     407
+CONNECT with key@host   200
+```
+
+Nothing in FR-03 said the credential had to travel, because nobody had used the result.
+
+### 2 — the client was pointed at empty files
+
+`tenant-ca.pem` and `device.crt` were written as **0 bytes** and named in
+`NODE_EXTRA_CA_CERTS` and `CLAUDE_CODE_CLIENT_CERT`. It degrades safely — ASM-28 measured
+the client warning and carrying on — but it is a setting naming a file with nothing in it.
+Only an artifact with content is configured now, which split `MANAGED_KEYS` into
+`ROUTING_KEYS` (always) and `ARTIFACT_KEYS` (when they exist).
+
+### 3 — the client silently ignores a one-sided userinfo
+
+The worst of the three, because it fails without saying anything:
+
+| Proxy URL | Result |
+| --- | --- |
+| `https://<key>@host:8443` | **no request at all** — no error, nothing reached the proxy, the run timed out |
+| `https://<key>:@host:8443` | the same |
+| `https://<key>:<key>@host:8443` | the run completed |
+
+The documented remote form is `--proxy http://<key>@host:port`, with the key as the
+username — which `curl` sends and the proxy accepts. Claude Code does not use it. Both
+slots are filled now: the username carries the pin when there is one and the key otherwise,
+the password always carries the key.
+
+### The constraint: the proxy cannot supply the client's own login
+
+Enrolling a **fresh** home produced `Not logged in · Please run /login`. The client checks
+its own credentials before it will talk to anything, and the proxy replacing the token
+afterwards does not change that. G-1 still holds — a login is not a process of ours — but
+the hosted story is "the proxy pools accounts for a client that is already logged in", not
+"the proxy is the login".
+
+### What the operator has to copy
+
+FR-16.2 says self-hosting means the operator copies the artifacts. Nothing exposed a way to
+*give* enrolment the CA, so `--ca <file>` exists now. Without it the proxy's own leaf is
+untrusted inside the tunnel and a run produces **no output at all** rather than an error —
+which is how the first attempt failed.
+
+### A service was stopped that should not have been
+
+A process on the host's port 3456 was judged a leftover from an earlier measurement session
+because its start time matched. It was a `systemd --user` unit in daily use. It was down
+**twelve minutes**. Restored from a backup taken beforehand, verified `active` and serving a
+real request; the accounts were checked afterwards and all three are healthy.
+
+The judgement was made on one weak signal and no check that would have settled it —
+`systemctl --user list-units` names it in a line. Nothing about the state of a machine
+should be inferred from a timestamp when the machine can be asked.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
