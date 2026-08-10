@@ -31,11 +31,24 @@ export const settingsPathDefault = () => join(homedir(), '.claude', 'settings.js
 // Exactly the keys enrolment writes, so `unenrol` removes exactly those. A test
 // asserts the two agree; a key written but not listed here would survive an
 // unenrol and keep sending traffic at a proxy the user has stopped using.
-export const MANAGED_KEYS = [
+/** Always written: without these the machine does not reach the proxy at all. */
+export const ROUTING_KEYS = [
   'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy',
   'NO_PROXY', 'no_proxy',
-  'NODE_EXTRA_CA_CERTS', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
 ];
+
+/**
+ * Written only when the artifact they name has something in it.
+ *
+ * Where TLS is terminated by an edge holding a public certificate there is no
+ * tenant CA to place, and mTLS is not enforced until #6, so an unsigned device
+ * certificate is not pointed at either. Configuring a zero-byte file makes the
+ * client warn and carry on (ASM-28) rather than fail, which is a setting that
+ * does nothing but produce noise.
+ */
+export const ARTIFACT_KEYS = ['NODE_EXTRA_CA_CERTS', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY'];
+
+export const MANAGED_KEYS = [...ROUTING_KEYS, ...ARTIFACT_KEYS];
 
 // ── settings.json, edited as text ───────────────────────────────────────────
 //
@@ -304,11 +317,21 @@ export async function enrol({
   const certPem = signCsr ? await signCsr(csrPem) : '';
   await writeFile(certPath, certPem, { mode: 0o644 });
 
+  // Only configure an artifact that has something in it. Pointing
+  // NODE_EXTRA_CA_CERTS at a zero-byte file makes the client warn and carry on
+  // (ASM-28) rather than fail, but it is still a setting naming an empty file —
+  // and where TLS is terminated by an edge holding a public certificate there is
+  // no tenant CA to place at all.
   const lines = buildClaudeEnvLines({
     port: url.port || (url.protocol === 'https:' ? 443 : 80),
     host: url.hostname,
     scheme: url.protocol.replace(':', ''),
-    caPath, certPath, keyPath,
+    // The credential travels in the URL's userinfo, which is the only channel an
+    // HTTPS_PROXY value has. Without it a hosted proxy answers 407 to everything.
+    proxyApiKey: decodeURIComponent(url.username || ''),
+    caPath: caPem ? caPath : null,
+    certPath: certPem ? certPath : null,
+    keyPath: certPem ? keyPath : null,
   });
 
   // FR-03.1 — user scope. Project scope captures the post-settings window and
@@ -396,19 +419,25 @@ export async function checkEnrolment({
   const rc = (await readIf(rcPath)) || '';
   const shell = rc.includes(MARKER);
 
+  // The device key is generated here and always placed (FR-16.3). A tenant CA
+  // only exists when the operator supplied one, so it is checked because it is
+  // *referenced*, not because it is expected.
   const artifacts = [];
-  for (const f of ['tenant-ca.pem', 'device.key']) {
-    if ((await readIf(join(artifactDir, f))) === null) artifacts.push(f);
+  if ((await readIf(join(artifactDir, 'device.key'))) === null) artifacts.push('device.key');
+  for (const k of ARTIFACT_KEYS) {
+    const at = settingsEnv[k];
+    if (at && (await readIf(at)) === null) artifacts.push(`${k} → ${at}`);
   }
 
   const problems = [];
-  if (!inSettings.length) {
+  const missingRouting = ROUTING_KEYS.filter((k) => !inSettings.includes(k));
+  if (missingRouting.length === ROUTING_KEYS.length) {
     problems.push(`${settingsPath} has none of the proxy settings. Background agents read this ` +
       'file and nothing else — without it their traffic reaches the API directly, and nothing ' +
       'surfaces an error. Run: teamclaude enrol --proxy <url>');
-  } else if (inSettings.length < MANAGED_KEYS.length) {
-    const missing = MANAGED_KEYS.filter((k) => !inSettings.includes(k));
-    problems.push(`${settingsPath} is missing ${missing.join(', ')}. Re-run: teamclaude enrol --proxy <url>`);
+  } else if (missingRouting.length) {
+    problems.push(`${settingsPath} is missing ${missingRouting.join(', ')}. ` +
+      'Re-run: teamclaude enrol --proxy <url>');
   }
   if (!shell) {
     problems.push(`${rcPath} has no teamclaude block. One request leaves before settings are ` +

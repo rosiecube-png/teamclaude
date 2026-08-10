@@ -1019,7 +1019,8 @@ async function enrolCommand(argv) {
   const at = argv.indexOf('--proxy');
   const proxyUrl = at >= 0 ? argv[at + 1] : null;
   if (!proxyUrl) {
-    console.error('Usage: teamclaude enrol --proxy https://proxy.example:8443');
+    console.error('Usage: teamclaude enrol --proxy https://<key>@proxy.example:8443 [--ca tenant-ca.pem]');
+    console.error('The key goes in the URL: it is the only channel an HTTPS_PROXY value has.');
     process.exitCode = 1;
     return;
   }
@@ -1028,8 +1029,23 @@ async function enrolCommand(argv) {
     process.exitCode = 1;
     return;
   }
+  // FR-16.2 — for self-hosting the operator copies the CA themselves; an
+  // authenticated distribution channel is M3. Without it the client does not
+  // trust the leaf the proxy mints inside the tunnel, and a run produces no
+  // output at all rather than an error.
+  const caAt = argv.indexOf('--ca');
+  const caFile = caAt >= 0 ? argv[caAt + 1] : null;
+  let caPem = null;
+  if (caFile) {
+    try { caPem = await (await import('node:fs/promises')).readFile(caFile, 'utf8'); }
+    catch (err) {
+      console.error(`Cannot read --ca ${caFile}: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   const { enrol } = await import('./enrol.js');
-  const out = await enrol({ proxyUrl });
+  const out = await enrol({ proxyUrl, caPem });
   console.log(`Enrolled against ${proxyUrl}`);
   console.log(`  settings: ${out.settingsPath}`);
   console.log(`  shell:    ${out.rcPath}`);
@@ -1450,10 +1466,14 @@ Commands:
                       the session to one account (see Environment below)
   alias               Print a shell alias so plain 'claude' routes via the proxy
                       (--install to write it to your shell rc; --uninstall to remove)
-  enrol --proxy <url> Point this machine at a hosted proxy: writes the env block to
+  enrol --proxy <url> [--ca <file>]
+                      Point this machine at a hosted proxy: writes the env block to
                       ~/.claude/settings.json AND a shell export, because the two
                       cover different windows -- one request leaves before settings
                       are read, and settings are what background agents honour
+                      --ca is the proxy's CA, copied from the host. In MITM mode
+                      the proxy mints its own leaf inside the tunnel, so without
+                      it the client produces no output at all -- not an error
   unenrol             Undo it. This is the recovery step when the service is
                       unreachable: it leaves the machine reaching the API directly
   enrol --check       Report which of the two locations are in place. The proxy

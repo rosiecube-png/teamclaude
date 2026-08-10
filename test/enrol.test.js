@@ -281,10 +281,16 @@ test('FR-16.1 — every artifact the settings file points at is actually placed'
   try {
     await enrol(OPTS(s));
     const env = JSON.parse(readFileSync(s.settings, 'utf8')).env;
+    // Whatever is configured must exist and must not be empty. Which artifacts
+    // are configured depends on what was supplied: an edge holding a public
+    // certificate leaves no tenant CA to place, and mTLS is not enforced until
+    // #6, so an unsigned device certificate is not pointed at either.
     for (const k of ['NODE_EXTRA_CA_CERTS', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY']) {
-      assert.ok(env[k], `${k} is not configured`);
+      if (!env[k]) continue;
       assert.ok(existsSync(env[k]), `${k} points at ${env[k]}, which does not exist`);
+      assert.ok(statSync(env[k]).size > 0, `${k} points at an empty file`);
     }
+    assert.ok(env.HTTPS_PROXY, 'the proxy itself must always be configured');
   } finally { s.drop(); }
 });
 
@@ -329,8 +335,11 @@ test('MANAGED_KEYS is exactly what enrolment writes, so unenrol removes exactly 
     writeFileSync(s.settings, FIXTURE);
     await enrol(OPTS(s));
     const written = Object.keys(JSON.parse(readFileSync(s.settings, 'utf8')).env);
-    assert.deepEqual(written.slice().sort(), MANAGED_KEYS.slice().sort(),
-      'a key is written that unenrol does not know to remove, or the reverse');
+    const unknown = written.filter((k) => !MANAGED_KEYS.includes(k));
+    assert.deepEqual(unknown, [],
+      'a key is written that unenrol does not know to remove, so it would survive and keep ' +
+      'sending traffic at a proxy the user has stopped using');
+    assert.ok(written.length >= 6, `only ${written.length} keys written — enrolment did almost nothing`);
   } finally { s.drop(); }
 });
 
@@ -357,4 +366,105 @@ test('unenrol is reachable under both spellings, and enrol is too', async () => 
   }
   assert.match(src, /unenrol\s+Undo it\. This is the recovery step/,
     'NFR-13.2 wants unenrol documented as the recovery step, including in --help');
+});
+
+// ── what a G-1 attempt found ────────────────────────────────────────────────
+//
+// Standing up a real hosted proxy and enrolling this machine against it is the
+// milestone's exit criterion, and it is the only thing that surfaced these. The
+// suite was green, the specs were satisfied, and an enrolled machine could not
+// reach the proxy at all:
+//
+//   CONNECT as enrolled     407
+//   CONNECT with key@host   200
+//
+// Nothing required enrolment to carry the credential, because nobody had tried
+// to use it.
+
+test('FR-03.2 — the credential in the proxy URL survives enrolment', async () => {
+  const s = sandbox();
+  try {
+    await enrol({ ...OPTS(s), proxyUrl: 'https://tc-key-123@proxy.example:8443' });
+    const env = JSON.parse(readFileSync(s.settings, 'utf8')).env;
+    // Both userinfo slots, because a single-component one is silently ignored
+    // by the client — see the case below.
+    assert.equal(env.HTTPS_PROXY, 'https://tc-key-123:tc-key-123@proxy.example:8443',
+      'a hosted proxy requires the key, and an enrolled machine gets 407 without it');
+    assert.match(readFileSync(s.rc, 'utf8'), /tc-key-123@proxy\.example:8443/,
+      'the shell half lost the credential the settings half kept');
+  } finally { s.drop(); }
+});
+
+test('a key with characters a shell would eat is encoded', async () => {
+  const s = sandbox();
+  try {
+    await enrol({ ...OPTS(s), proxyUrl: 'https://a b(c)@proxy.example:8443' });
+    const line = readFileSync(s.rc, 'utf8').split('\n').find((l) => l.startsWith('export HTTPS_PROXY='));
+    const value = line.slice('export HTTPS_PROXY='.length);
+    assert.doesNotMatch(value, /[ ()]/,
+      `these lines are emitted unquoted, so this would be a shell syntax error: ${line}`);
+    assert.match(value, /a%20b%28c%29@/, 'the key was mangled rather than encoded');
+  } finally { s.drop(); }
+});
+
+test('FR-16.1 — the client is never pointed at an artifact that is empty', async () => {
+  // NODE_EXTRA_CA_CERTS pointing at a zero-byte file made the client warn and
+  // carry on (ASM-28), so it degrades safely — but it is still a configuration
+  // that names a file with nothing in it. Where TLS is terminated by an edge
+  // with a public certificate there is no tenant CA to place.
+  const s = sandbox();
+  try {
+    await enrol(OPTS(s));   // no caPem, no signCsr
+    const env = JSON.parse(readFileSync(s.settings, 'utf8')).env;
+    for (const k of ['NODE_EXTRA_CA_CERTS', 'CLAUDE_CODE_CLIENT_CERT']) {
+      if (env[k]) assert.ok(statSync(env[k]).size > 0, `${k} points at an empty file`);
+    }
+    // The device key is still placed and still generated here (FR-16.3).
+    assert.ok(statSync(join(s.artifacts, 'device.key')).size > 0);
+  } finally { s.drop(); }
+});
+
+test('FR-16.1 — an artifact that does have content is configured', async () => {
+  const s = sandbox();
+  try {
+    const { createCA } = await import('../src/x509.js');
+    await enrol({ ...OPTS(s), caPem: createCA('Tenant CA').certPem });
+    const env = JSON.parse(readFileSync(s.settings, 'utf8')).env;
+    assert.ok(env.NODE_EXTRA_CA_CERTS, 'a real tenant CA was placed and not referenced');
+    assert.ok(statSync(env.NODE_EXTRA_CA_CERTS).size > 0);
+  } finally { s.drop(); }
+});
+
+test('FR-03.2 — the proxy URL carries both userinfo components, or the client ignores it', async () => {
+  // Measured against Claude Code 2.1.224 through a real hosted proxy:
+  //
+  //   https://<key>@host:8443     no request at all — no error, nothing reached
+  //   https://<key>:@host:8443    the proxy, the run just timed out
+  //   https://<key>:<key>@host    the run completed
+  //
+  // A single-component userinfo is not rejected, it is silently unused, which is
+  // the worst way for an enrolment to be wrong.
+  const s = sandbox();
+  try {
+    await enrol({ ...OPTS(s), proxyUrl: 'https://tc-key-123@proxy.example:8443' });
+    const url = JSON.parse(readFileSync(s.settings, 'utf8')).env.HTTPS_PROXY;
+    const { username, password } = new URL(url);
+    assert.ok(username && password, `both slots must be filled: ${url}`);
+    assert.equal(password, 'tc-key-123', 'the password slot is what connectAuthorized checks');
+    assert.equal(username, 'tc-key-123',
+      'with no pin the username holds the key, which is what resolveConnectPin accepts');
+  } finally { s.drop(); }
+});
+
+test('a pinned enrolment keeps the pin in the username and the key in the password', async () => {
+  const lines = buildClaudeEnvLines({ port: 8443, host: 'p.example', scheme: 'https', proxyApiKey: 'K', account: 'work' });
+  const url = new URL(lines.find((l) => l.startsWith('export HTTPS_PROXY=')).slice('export HTTPS_PROXY='.length));
+  assert.equal(url.username, 'work');
+  assert.equal(url.password, 'K');
+});
+
+test('with neither a key nor a pin the URL carries no userinfo at all', () => {
+  const lines = buildClaudeEnvLines({ port: 3456 });
+  assert.ok(lines.includes('export HTTPS_PROXY=http://127.0.0.1:3456'),
+    'the local default grew a stray @');
 });
