@@ -850,6 +850,52 @@ copy the blocker. Automating that copy is the next piece, not this one.
 
 ---
 
+## 2026-08-10 — the operator stops carrying a file
+
+The CA is stable now, so a machine needs it **once**. `/teamclaude/ca` serves it and
+`enrol` fetches it, which is what turns "copy this to every PC" into one command.
+
+| | |
+| --- | --- |
+| Register | FR-16.2 — the M3 deferral is withdrawn; distribution is M1 because it is what the purpose asks for |
+| Spec | `m1-enrolment.md` §3.2 |
+| Test | `test/enrol.test.js` — fetch, pin, refusal, and `--ca` still winning |
+| Docs | `enrol --ca-sha256` in `--help` |
+
+The channel is the edge's own publicly-trusted TLS, which does **not** depend on the
+certificate being fetched — so a rotation can never lock a machine out of collecting what
+it needs. Trust-on-first-use by default; `--ca-sha256 <hex>` refuses anything else, which
+means the operator publishes a string rather than moving a file. `--ca <file>` stays for
+checking it out of band.
+
+Verified end to end against a proxy on an ephemeral port: the endpoint answers with
+`x-teamclaude-ca-sha256`, `teamclaude enrol` with no file installs it, and the hash of what
+landed matches what was served.
+
+### A gate that had a copy of itself
+
+Probing the new endpoint turned up something older. The request path carried its own inline
+auth check reading `isLoopbackAddr` directly, so `proxy.connect.allowLoopbackClients` — the
+switch NFR-20.2 exists for — did nothing there. task-6 introduced `clientAuthorized()` and
+gave it to the upgrade path; the request path kept its copy. All three egress paths use the
+one gate now.
+
+### A false alarm, recorded because it was convincing
+
+The first probe reported the CA endpoint answering **200 with no key**. It was the probe:
+`${k:+-H ...}` omitted the header entirely for the empty case, so nothing was sent and
+loopback exemption applied. A wrong key has always been 401. Worth writing down because the
+output looked exactly like a real hole, and the finding above was found while chasing it.
+
+### An unrelated flake, attributed
+
+`an upstream socket that dies mid-relay tears down the pair` fails intermittently. It was
+tempting to blame this session's concurrency tests, and reducing their load did help — but
+on a clean `master` worktree it fails **2 runs in 4** on its own. Pre-existing, not caused
+here, and not fixed here either.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

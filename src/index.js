@@ -1044,8 +1044,20 @@ async function enrolCommand(argv) {
       return;
     }
   }
+  const pinAt = argv.indexOf('--ca-sha256');
+  const caSha256 = pinAt >= 0 ? argv[pinAt + 1] : null;
   const { enrol } = await import('./enrol.js');
-  const out = await enrol({ proxyUrl, caPem });
+  let out;
+  try {
+    out = await enrol({ proxyUrl, caPem, caSha256 });
+  } catch (err) {
+    console.error(`Enrolment failed: ${err.message}`);
+    if (/CA|certificate/i.test(err.message)) {
+      console.error('The proxy serves its CA at /teamclaude/ca. If it cannot, copy the file and pass --ca.');
+    }
+    process.exitCode = 1;
+    return;
+  }
   console.log(`Enrolled against ${proxyUrl}`);
   console.log(`  settings: ${out.settingsPath}`);
   console.log(`  shell:    ${out.rcPath}`);
@@ -1466,14 +1478,16 @@ Commands:
                       the session to one account (see Environment below)
   alias               Print a shell alias so plain 'claude' routes via the proxy
                       (--install to write it to your shell rc; --uninstall to remove)
-  enrol --proxy <url> [--ca <file>]
+  enrol --proxy <url> [--ca <file>] [--ca-sha256 <hex>]
                       Point this machine at a hosted proxy: writes the env block to
                       ~/.claude/settings.json AND a shell export, because the two
                       cover different windows -- one request leaves before settings
                       are read, and settings are what background agents honour
-                      --ca is the proxy's CA, copied from the host. In MITM mode
-                      the proxy mints its own leaf inside the tunnel, so without
-                      it the client produces no output at all -- not an error
+                      The CA is fetched from the proxy. --ca <file> uses a copy
+                      instead, and --ca-sha256 <hex> refuses one that does not
+                      match. In MITM mode the proxy mints its own leaf inside the
+                      tunnel, so without a CA the client produces no output at
+                      all -- not an error
   unenrol             Undo it. This is the recovery step when the service is
                       unreachable: it leaves the machine reaching the API directly
   enrol --check       Report which of the two locations are in place. The proxy

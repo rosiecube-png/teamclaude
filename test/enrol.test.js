@@ -18,7 +18,7 @@ import { X509Certificate } from 'node:crypto';
 // during a test run has already broken a live session once.
 
 const {
-  enrol, unenrol, mergeSettingsEnv, unmergeSettingsEnv, settingsEnvFromLines, MANAGED_KEYS, MARKER,
+  enrol, unenrol, mergeSettingsEnv, unmergeSettingsEnv, settingsEnvFromLines, fetchCA, MANAGED_KEYS, MARKER,
 } = await import('../src/enrol.js');
 const { buildClaudeEnvLines } = await import('../src/claude-env.js');
 const { createCsr } = await import('../src/x509.js');
@@ -47,11 +47,21 @@ function sandbox() {
   };
 }
 
+// A proxy that serves a CA, so enrolment exercises the fetch rather than
+// skipping it. Every case below therefore runs the path a real machine runs.
+const SERVED_CA = (await import('../src/x509.js')).createCA('Test Proxy CA').certPem;
+const servingRequest = (opts, cb) => {
+  const res = { statusCode: 200, on: (e, f) => { if (e === 'data') f(SERVED_CA); if (e === 'end') f(); } };
+  queueMicrotask(() => cb(res));
+  return { on: () => {}, end: () => {} };
+};
+
 const OPTS = (s) => ({
   proxyUrl: 'https://proxy.example:8443',
   settingsPath: s.settings,
   rcPath: s.rc,
   artifactDir: s.artifacts,
+  request: servingRequest,
 });
 
 // ── mergeSettingsEnv — the two properties that break silently ────────────────
@@ -467,4 +477,61 @@ test('with neither a key nor a pin the URL carries no userinfo at all', () => {
   const lines = buildClaudeEnvLines({ port: 3456 });
   assert.ok(lines.includes('export HTTPS_PROXY=http://127.0.0.1:3456'),
     'the local default grew a stray @');
+});
+
+// ── FR-16.2 — the operator stops carrying a file ────────────────────────────
+
+test('enrolment fetches the CA from the proxy when it is not handed one', async () => {
+  const s = sandbox();
+  const { createCA } = await import('../src/x509.js');
+  const served = createCA('Served CA').certPem;
+  let sawKey = null, sawPath = null;
+  // Stand in for the transport so the test needs no listener.
+  const request = (opts, cb) => {
+    sawKey = opts.headers['x-api-key'];
+    sawPath = opts.path;
+    const res = { statusCode: 200, on: (e, f) => { if (e === 'data') f(served); if (e === 'end') f(); } };
+    queueMicrotask(() => cb(res));
+    return { on: () => {}, end: () => {} };
+  };
+  try {
+    const { caPem } = await fetchCA('https://tc-key@proxy.example:8443', { request });
+    assert.equal(caPem, served);
+    assert.equal(sawPath, '/teamclaude/ca');
+    assert.equal(sawKey, 'tc-key', 'the fetch went unauthenticated');
+  } finally { s.drop(); }
+});
+
+test('a CA that does not match the fingerprint given is refused', async () => {
+  const { createCA } = await import('../src/x509.js');
+  const request = (opts, cb) => {
+    const res = { statusCode: 200, on: (e, f) => { if (e === 'data') f(createCA('Impostor').certPem); if (e === 'end') f(); } };
+    queueMicrotask(() => cb(res));
+    return { on: () => {}, end: () => {} };
+  };
+  await assert.rejects(
+    () => fetchCA('https://k@proxy.example:8443', { request, expectSha256: 'a'.repeat(64) }),
+    /does not match the fingerprint/,
+    'trust-on-first-use is the default, but a pin that is given must be enforced');
+});
+
+test('a proxy that will not serve its CA is not silently enrolled against', async () => {
+  const request = (opts, cb) => {
+    const res = { statusCode: 404, on: (e, f) => { if (e === 'end') f(); } };
+    queueMicrotask(() => cb(res));
+    return { on: () => {}, end: () => {} };
+  };
+  await assert.rejects(() => fetchCA('https://k@proxy.example:8443', { request }), /answered 404/);
+});
+
+test('--ca still wins, so an operator can check it out of band', async () => {
+  const s = sandbox();
+  const { createCA } = await import('../src/x509.js');
+  const mine = createCA('Checked By Hand').certPem;
+  try {
+    // No transport is provided, so a fetch would throw. It must not happen.
+    await enrol({ ...OPTS(s), caPem: mine });
+    const env = JSON.parse(readFileSync(s.settings, 'utf8')).env;
+    assert.equal(readFileSync(env.NODE_EXTRA_CA_CERTS, 'utf8'), mine);
+  } finally { s.drop(); }
 });

@@ -40,10 +40,19 @@ function sandbox() {
 
 const PROXY = 'https://proxy.example:8443';
 
+// Enrolment fetches the CA from the proxy now, so these need one to answer.
+const SERVED_CA = (await import('../src/x509.js')).createCA('Test Proxy CA').certPem;
+const request = (opts, cb) => {
+  const res = { statusCode: 200, on: (e, f) => { if (e === 'data') f(SERVED_CA); if (e === 'end') f(); } };
+  queueMicrotask(() => cb(res));
+  return { on: () => {}, end: () => {} };
+};
+const ENROL = (s) => ({ proxyUrl: PROXY, request, ...s.opts });
+
 test('FR-18.1 — a fully enrolled machine reports no problem', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     const r = await checkEnrolment(s.opts);
     assert.deepEqual(r.problems, [], 'a correct enrolment was reported as broken');
     assert.equal(r.complete, true);
@@ -62,7 +71,7 @@ test('FR-18.1 — settings gone, shell present: named, with the consequence', as
   // arrives to be counted.
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     writeFileSync(s.opts.settingsPath, '{ "theme": "dark" }\n');
     const r = await checkEnrolment(s.opts);
     assert.equal(r.complete, false);
@@ -78,7 +87,7 @@ test('FR-18.1 — settings gone, shell present: named, with the consequence', as
 test('FR-18.1 — shell gone, settings present: named too', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     writeFileSync(s.opts.rcPath, '# my own rc\n');
     const r = await checkEnrolment(s.opts);
     assert.equal(r.complete, false);
@@ -92,7 +101,7 @@ test('FR-18.1 — shell gone, settings present: named too', async () => {
 test('a half-written settings env is a problem, not a pass', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     writeFileSync(s.opts.settingsPath, JSON.stringify({ env: { HTTPS_PROXY: PROXY } }, null, 2));
     const r = await checkEnrolment(s.opts);
     assert.equal(r.complete, false);
@@ -104,7 +113,7 @@ test('a half-written settings env is a problem, not a pass', async () => {
 test('an artifact the settings point at but that is gone is reported', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     rmSync(join(s.opts.artifactDir, 'device.key'));
     const r = await checkEnrolment(s.opts);
     assert.equal(r.complete, false);
@@ -118,7 +127,7 @@ test('a settings.json with comments is read, not rejected', async () => {
   const s = sandbox();
   try {
     mkdirSync(s.opts.artifactDir, { recursive: true });
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     // The real enrolled file with a comment put back on top of it, rather than a
     // hand-built one: the check verifies that a referenced artifact exists, so a
     // fixture pointing every key at "x" would be reporting a broken machine
@@ -134,7 +143,7 @@ test('a settings.json with comments is read, not rejected', async () => {
 test('a // inside a string value is not treated as a comment', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     const env = Object.fromEntries(MANAGED_KEYS.map((k) => [k, 'https://proxy.example:8443']));
     writeFileSync(s.opts.settingsPath, JSON.stringify({ env }, null, 2));
     const r = await checkEnrolment(s.opts);
@@ -156,7 +165,7 @@ test('an unenrolled machine is reported as unenrolled, not as an error', async (
 test('the marker the check looks for is the one enrolment writes', async () => {
   const s = sandbox();
   try {
-    await enrol({ proxyUrl: PROXY, ...s.opts });
+    await enrol(ENROL(s));
     const { readFileSync } = await import('node:fs');
     assert.ok(readFileSync(s.opts.rcPath, 'utf8').includes(MARKER),
       'the check and the writer would drift apart silently');

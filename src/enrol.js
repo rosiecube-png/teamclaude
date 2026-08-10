@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { buildClaudeEnvLines } from './claude-env.js';
 import { createCsr } from './x509.js';
+import { createHash } from 'node:crypto';
 
 /** Marks the block enrolment owns in a shell rc, so removal is exact. */
 export const MARKER = '# teamclaude enrolment (managed — teamclaude unenrol removes this)';
@@ -287,12 +288,56 @@ function rcBlock(lines) {
  * self-hosting there may be nothing to call yet — mTLS is not enforced until
  * #6 — and the key and request are still placed so M2 does not redo this.
  */
+/**
+ * Ask the proxy for the CA a client needs to trust it.
+ *
+ * The channel is the edge's own TLS, which is publicly trusted and does **not**
+ * depend on the certificate being fetched — so this can always deliver, and a
+ * rotation can never lock a machine out of collecting the thing it needs.
+ *
+ * Trust-on-first-use unless `expectSha256` is given. What the operator publishes
+ * is then a string rather than a file, which is still one thing to carry but not
+ * one to move.
+ */
+export async function fetchCA(proxyUrl, { expectSha256 = null, request = null } = {}) {
+  const url = new URL(proxyUrl);
+  const key = decodeURIComponent(url.username || '') || decodeURIComponent(url.password || '');
+  const transport = request || (url.protocol === 'https:'
+    ? (await import('node:https')).request
+    : (await import('node:http')).request);
+
+  const pem = await new Promise((resolve, reject) => {
+    const req = transport({
+      protocol: url.protocol, hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: '/teamclaude/ca', method: 'GET', headers: key ? { 'x-api-key': key } : {},
+    }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => (res.statusCode === 200
+        ? resolve(body)
+        : reject(new Error(`the proxy answered ${res.statusCode} for its CA`))));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  if (!/BEGIN CERTIFICATE/.test(pem)) throw new Error('the proxy did not return a certificate');
+  const got = createHash('sha256').update(pem).digest('hex');
+  if (expectSha256 && got !== expectSha256.toLowerCase()) {
+    throw new Error(`the CA does not match the fingerprint given: expected ${expectSha256}, got ${got}`);
+  }
+  return { caPem: pem, sha256: got };
+}
+
 export async function enrol({
   proxyUrl,
   settingsPath = settingsPathDefault(),
   rcPath = join(homedir(), '.bashrc'),
   artifactDir = artifactDirDefault(),
   caPem = null,
+  caSha256 = null,
+  request = null,
   signCsr = null,
   deviceName = 'teamclaude-device',
 } = {}) {
@@ -304,6 +349,13 @@ export async function enrol({
   await mkdir(artifactDir, { recursive: true });
 
   // FR-16.3 — the key is made here. Only the request can leave.
+  // FR-16.2 — the operator no longer has to carry a file. `--ca` still works for
+  // anyone who wants to check it out of band.
+  if (caPem === null) {
+    const fetched = await fetchCA(proxyUrl, { expectSha256: caSha256, request });
+    caPem = fetched.caPem;
+  }
+
   const { keyPem, csrPem } = createCsr(deviceName);
   await writeFile(keyPath, keyPem, { mode: 0o600 });
   await chmod(keyPath, 0o600); // an existing file keeps its old mode otherwise

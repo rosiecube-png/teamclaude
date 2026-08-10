@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 import { createWriteStream, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -119,10 +119,13 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
 
   const requestHandler = async (req, res) => {
     try {
-      // Auth check — skip for localhost connections.
-      const clientKey = req.headers['x-api-key'];
-      const isLocal = isLoopbackAddr(req.socket.remoteAddress);
-      if (proxyApiKey && !safeKeyEqual(clientKey, proxyApiKey) && !isLocal) {
+      // The same gate all three egress paths use. It had its own inline copy
+      // that read `isLoopbackAddr` directly, so `proxy.connect.allowLoopbackClients`
+      // — the switch NFR-20.2 exists for — did nothing here: a hosted node with
+      // the exemption explicitly off still answered an unauthenticated request
+      // from its own loopback. Found by probing the new CA endpoint.
+      if (!clientAuthorized(req, req.socket, proxyApiKey,
+        { allowLoopbackClients: destinations.options.allowLoopbackClients })) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           type: 'error',
@@ -136,6 +139,25 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
       // manage (the Anthropic upstream, which is HTTPS-only and never arrives
       // this way); forward anything else transparently instead of hijacking it.
       if (/^https?:\/\//i.test(req.url || '')) { await relayHttpForward(req, res, destinations); return; }
+
+      // The CA a client needs to trust the leaf this proxy mints inside the
+      // tunnel. FR-16.2 had the operator copy it by hand, which meant a file to
+      // move to every machine — and, until the CA stopped rotating, moving it
+      // again every couple of months. Serving it turns that into one command.
+      //
+      // The certificate is public: it is presented in every intercepted
+      // handshake. The gate above still applies, which costs nothing here
+      // because a client enrolling already has the key.
+      if (req.method === 'GET' && req.url === '/teamclaude/ca') {
+        const { caCertPem } = await ensureCerts(mitmHost, { config, log: console.error });
+        res.writeHead(200, {
+          'Content-Type': 'application/x-pem-file',
+          // So a client can pin what it is about to trust without parsing it.
+          'x-teamclaude-ca-sha256': createHash('sha256').update(caCertPem).digest('hex'),
+        });
+        res.end(caCertPem);
+        return;
+      }
 
       // Status endpoint
       if (req.method === 'GET' && req.url === '/teamclaude/status') {

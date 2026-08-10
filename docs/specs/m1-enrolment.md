@@ -111,9 +111,18 @@ Certificate **files** are placed in M1 even though mTLS enforcement is M2
 what they mean for §9: a key minted on the server and sent down was, for a moment, the
 server's. Deciding it now costs nothing and stops M2 from inheriting the weaker shape.
 
-> **FR-16.2** For self-hosting the operator copies the artifacts themselves; an
-> authenticated distribution channel is **not** an M1 requirement. It becomes one in M3,
-> when other people enrol.
+> **FR-16.2** Enrolment MUST obtain the CA from the proxy itself. The operator MUST NOT
+> have to move a file to each machine.
+
+**Reworded.** It read *the operator copies the artifacts themselves; an authenticated
+distribution channel is not an M1 requirement*. That deferral undercut the purpose: the
+burden was not removed, it moved from installing a proxy to installing a certificate, and
+the second is the more sensitive of the two.
+
+The channel is the edge's own publicly-trusted TLS, which does not depend on the
+certificate being fetched — so a rotation cannot lock a machine out of collecting what it
+needs. Trust-on-first-use by default; `--ca-sha256` pins it, so an operator publishes a
+string rather than moving a file. `--ca <file>` remains for out-of-band checking.
 
 ### 3.3 Detecting a broken configuration
 
