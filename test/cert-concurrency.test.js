@@ -33,7 +33,9 @@ const LEAF = join(TMP, 'teamclaude-leaf.pem');
 const KEY = join(TMP, 'teamclaude-leaf.key');
 const HOST = 'api.anthropic.com';
 
-const wipe = () => { for (const f of [CA, LEAF, KEY, LOCK]) rmSync(f, { force: true }); };
+const CA_KEY = join(TMP, 'teamclaude-ca.key');
+const CROSS = join(TMP, 'teamclaude-ca-cross.pem');
+const wipe = () => { for (const f of [CA, CA_KEY, CROSS, LEAF, KEY, LOCK]) rmSync(f, { force: true }); };
 const pairAgrees = () => {
   const ca = new X509Certificate(readFileSync(CA, 'utf8'));
   return new X509Certificate(readFileSync(LEAF, 'utf8')).verify(ca.publicKey);
@@ -42,7 +44,7 @@ const pairAgrees = () => {
 test('concurrent callers in one process mint one chain, not several', async () => {
   wipe();
   let minted = 0;
-  const log = (m) => { if (/minting|regenerating/.test(m)) minted++; };
+  const log = (m) => { if (/(minting a MITM|renewing the MITM|CA expires in)/.test(m)) minted++; };
   const all = await Promise.all(
     Array.from({ length: 6 }, () => ensureCerts(HOST, { config: {}, log })));
   assert.equal(minted, 1, `six callers minted ${minted} chains`);
@@ -109,7 +111,7 @@ test('a torn pair is re-read before it is believed', async () => {
   const other = createCA('Someone Else', 3650);
   writeFileSync(CA, other.certPem);
   let regenerated = 0;
-  await ensureCerts(HOST, { config: {}, log: (m) => { if (/regenerating/.test(m)) regenerated++; } });
+  await ensureCerts(HOST, { config: {}, log: (m) => { if (/(minting a MITM|renewing the MITM|CA expires in)/.test(m)) regenerated++; } });
   // It does regenerate — the state is genuinely broken and nobody fixed it in
   // between — but the pair it leaves behind agrees.
   assert.equal(regenerated, 1);
@@ -156,8 +158,8 @@ test('three processes wanting the same chain mint it once between them', { timeo
     let minted = 0;
     const start = Number(process.argv[2]);
     while (Date.now() < start) { /* line up on a shared clock */ }
-    for (let i = 0; i < 8; i++) {
-      await ensureCerts('${HOST}', { config: {}, log: (m) => { if (/minting|regenerating/.test(m)) minted++; } });
+    for (let i = 0; i < 5; i++) {
+      await ensureCerts('${HOST}', { config: {}, log: (m) => { if (/(minting a MITM|renewing the MITM|CA expires in)/.test(m)) minted++; } });
     }
     process.stdout.write(String(minted));
   `);
@@ -198,7 +200,7 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
     const { ensureCerts } = await import(${mitm});
     while (Date.now() < Number(process.argv[2])) {}
     let errors = 0;
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 10; i++) {
       // A renewal falling due, from this process's point of view.
       rmSync(${dir} + '/teamclaude-leaf.pem', { force: true });
       try { await ensureCerts('${HOST}', { config: {} }); } catch { errors++; }
@@ -211,7 +213,7 @@ test('under contention, ensureCerts never hands back an incoherent chain', { tim
     const { ensureCerts } = await import(${mitm});
     while (Date.now() < Number(process.argv[2])) {}
     let incoherent = 0, errors = 0, minted = 0;
-    const calls = 12;
+    const calls = 6;
     for (let i = 0; i < calls; i++) {
       try {
         const c = await ensureCerts('${HOST}', { config: {}, log: (m) => { if (/regenerating|minting/.test(m)) minted++; } });

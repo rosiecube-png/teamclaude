@@ -105,6 +105,19 @@ signal that enrolled devices are about to need a new CA.
 > **NFR-17.5** The renewal check MUST NOT be memoised for the process lifetime, and a
 > replaced chain MUST reach new connections without a restart.
 
+> **NFR-17.6** Renewing the leaf MUST NOT change the CA. Devices are enrolled against the
+> CA and hold it; replacing it on every leaf renewal breaks all of them.
+
+Measured before the fix: a one-minute CA, six rotations, six failures to verify. The CA key
+was discarded at issuance, so there was nothing to re-sign a leaf with.
+
+> **NFR-17.7** A CA that must be replaced MUST be succeeded by one it cross-signs, and both
+> MUST be served, so a device holding only the predecessor keeps working without acting.
+
+This is bounded by the predecessor's own expiry — cross-signing carries a device across
+rotations, not past the end of what it trusts. That boundary is the only case that needs a
+re-enrolment.
+
 NFR-17.5 is the one that makes the rest work, and it was missing. Two memos stand between
 a regenerated chain and a client: `certsPromise` (`src/server.js:182`) is resolved once,
 and `serverPromises` (`src/mitm.js:131`) caches a terminating server that baked the

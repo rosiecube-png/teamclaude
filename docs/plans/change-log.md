@@ -779,6 +779,77 @@ should be inferred from a timestamp when the machine can be asked.
 
 ---
 
+## 2026-08-10 — the CA stops changing under the devices that trust it
+
+A device is handed a CA at enrolment and holds it. Renewing the leaf minted a
+**new CA** every time, because the CA key was discarded and there was nothing to
+re-sign with. With the shipped 90/30 policy that is roughly every 60 days, and
+every enrolled machine stops verifying on the day it happens.
+
+Compressed onto a one-minute CA so it could be watched:
+
+```
+device enrolled with CA 56AB6F76
+ +25s  proxy serves CA 9EC7E162   device can verify: NO
+ +50s                  3528CE4D   NO
+ +75s                  D3A340F2   NO      … six rotations, six failures
+```
+
+| | |
+| --- | --- |
+| Register | ASM-16 becomes true — "a leaf swap costs the client nothing" was not, because a leaf swap swapped the CA |
+| Spec | `m1-certificates.md` — §2.2 anticipated exactly this and nobody closed it |
+| Test | `test/cert-lifetime.test.js`, `test/cert-concurrency.test.js` |
+| Others | pending — the distribution half is not in this change |
+
+### What it does now
+
+| Situation | Action | Cost to a device |
+| --- | --- | --- |
+| CA fine, leaf due | re-sign a leaf under the same CA | none |
+| CA near its end | issue a successor **cross-signed by the CA being replaced**, serve both | none |
+| nothing usable | mint from scratch | re-enrolment |
+
+Same accelerated clock, after:
+
+```
+t+ 13s … t+ 78s   same CA,      chain:1   device connects
+t+ 92s … t+118s   successor,    chain:2   device connects
+t+118s onward     CERT_HAS_EXPIRED
+```
+
+The last line is not a defect. The device's **own anchor** was a 120-second
+certificate; cross-signing carries a device across rotations, not past the
+expiry of the thing it trusts. That boundary is real and is the one reason a
+re-enrolment is ever needed.
+
+### Four defects found by running it rather than reasoning about it
+
+| | |
+| --- | --- |
+| Every CA used the same CN | The cross-signed certificate had identical subject and issuer, indistinguishable from a self-signed root. Path building treated it as its own anchor and refused — eight rotations, eight refusals, with a valid cross-signature sitting in the chain |
+| `positiveDays` floored its input | `1/2880` became **0**, so the leaf was born expired and every handshake failed `CERT_HAS_EXPIRED` while the crypto underneath was correct |
+| The cross-signature was dropped on the next leaf renewal | Chain went back to one certificate and devices lost the bridge mid-flight: connects, connects, connects, `UNABLE_TO_VERIFY` |
+| `loadCA` did not check the key against the certificate | The two files are written separately, so one can be left over. Signing with a mismatched key yields a leaf claiming an issuer that cannot have issued it — valid bytes, unusable chain. Found by a concurrency test that plants exactly that state |
+
+None of these is visible from the code. Each needed a rotation to actually
+happen, which is what the accelerated clock is for.
+
+### A test that destabilised its neighbours
+
+The contention test spawns processes that mint RSA keypairs, and under the full
+suite that was enough to make a timing-sensitive relay test fail — in CI once,
+and locally. It passes 3/3 alone. The work is halved; the relay test is quiet
+again. A test that is correct and still breaks the run is not finished.
+
+### Not in this change
+
+`/teamclaude/ca` and enrolment fetching it. The CA is stable now, so a device
+needs it **once** rather than every two months — which is what made the manual
+copy the blocker. Automating that copy is the next piece, not this one.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

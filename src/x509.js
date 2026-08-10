@@ -6,7 +6,7 @@
 // the launched claude process trusts via NODE_EXTRA_CA_CERTS. Nothing here is a
 // general-purpose ASN.1 library — just what these two certs need.
 
-import { generateKeyPairSync, sign as cryptoSign, randomBytes } from 'node:crypto';
+import { generateKeyPairSync, sign as cryptoSign, randomBytes, createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto';
 
 // ── ASN.1 DER primitives ──────────────────────────────────────
 
@@ -156,6 +156,44 @@ export function createCA(cn = 'TeamClaude Local CA', days = DEFAULT_CA_DAYS) {
   return { cn, certPem, keyPem: key.keyPem, privateKey: key.privateKey };
 }
 
+/**
+ * Load a CA back from the PEMs it was stored as, so leaves can keep being
+ * issued under it.
+ *
+ * Without this every leaf renewal minted a new CA, because there was no key to
+ * sign with — and every enrolled device broke, measured: six rotations, six
+ * failures to verify, none of them survivable.
+ */
+export function loadCA(certPem, keyPem) {
+  const cert = new X509Certificate(certPem);
+  const privateKey = createPrivateKey(keyPem);
+  // The two files are replaced separately, and one can be left over from an
+  // earlier chain. Signing with a key that does not belong to the certificate
+  // produces a leaf claiming an issuer that cannot have issued it — valid
+  // bytes, unusable chain. Cheaper to refuse here than to serve it.
+  const fromKey = createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
+  const fromCert = cert.publicKey.export({ type: 'spki', format: 'der' });
+  if (!fromKey.equals(fromCert)) throw new Error('the stored CA key does not match the stored CA certificate');
+  const cn = (cert.subject.match(/CN=(.*)$/m) || [, 'TeamClaude Local CA'])[1].trim();
+  return { cn, certPem, keyPem, privateKey, notAfter: new Date(cert.validTo) };
+}
+
+/**
+ * Issue a successor CA signed by the one it replaces (cross-signing).
+ *
+ * A device holds the CA it was handed at enrolment and nothing on it refreshes.
+ * When the proxy rotates, serving `leaf + this` lets that device validate a leaf
+ * issued by the *new* CA against the *old* one it already trusts — measured
+ * `authorized=true`. It is how public CAs change roots, and it is what makes
+ * rotation cost the device nothing.
+ */
+export function crossSignCA(successorCn, successorSpkiDer, issuer, days = DEFAULT_CA_DAYS) {
+  return buildCert({
+    subjectCN: successorCn, issuerCN: issuer.cn, spkiDer: successorSpkiDer,
+    signKey: issuer.privateKey, isCA: true, days,
+  });
+}
+
 export function createLeaf(hosts, ca, days = DEFAULT_LEAF_DAYS) {
   const list = Array.isArray(hosts) ? hosts : [hosts];
   const key = newRsaKey();
@@ -196,7 +234,7 @@ export function createCsr(commonName) {
   };
 }
 
-/** Generate a fresh CA + a leaf covering `hosts` (string or array). Returns PEM strings. */
+/** A fresh CA plus a leaf covering `hosts`. Returns PEM strings. */
 export function generateCertChain(hosts, { leafDays = DEFAULT_LEAF_DAYS, caDays = DEFAULT_CA_DAYS } = {}) {
   const ca = createCA(undefined, caDays);
   const leaf = createLeaf(hosts, ca, leafDays);
@@ -206,4 +244,30 @@ export function generateCertChain(hosts, { leafDays = DEFAULT_LEAF_DAYS, caDays 
     leafCertPem: leaf.certPem,
     leafKeyPem: leaf.keyPem,
   };
+}
+
+/**
+ * A successor CA, cross-signed by the CA it replaces.
+ *
+ * Returns the successor's own self-signed certificate (what a *newly* enrolled
+ * device is handed) and the cross-signed one (what is served in the chain, so
+ * devices holding the predecessor keep working).
+ */
+export function succeedCA(previous, { caDays = DEFAULT_CA_DAYS } = {}) {
+  // A distinct name per generation, or the cross-signed certificate is
+  // indistinguishable from a self-signed root: same subject, same issuer. Path
+  // building then treats it as its own anchor, fails to verify it against the
+  // CA the device actually trusts, and rejects the connection — measured, eight
+  // rotations, eight refusals, with a valid cross-signature sitting right there.
+  const next = createCA(`TeamClaude Local CA ${randomBytes(4).toString('hex')}`, caDays);
+  return {
+    caCertPem: next.certPem,
+    caKeyPem: next.keyPem,
+    crossCertPem: crossSignCA(next.cn, publicSpkiOf(next.keyPem), previous, caDays),
+  };
+}
+
+/** The SubjectPublicKeyInfo DER for a private key, as buildCert wants it. */
+function publicSpkiOf(keyPem) {
+  return createPublicKey(keyPem).export({ type: 'spki', format: 'der' });
 }

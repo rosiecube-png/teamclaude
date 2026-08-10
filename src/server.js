@@ -215,7 +215,10 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
     certsInFlight ||= ensureCerts(mitmHost, { config, log: console.error })
       .finally(() => { certsInFlight = null; });
     const c = await certsInFlight;
-    return { key: c.leafKeyPem, cert: c.leafCertPem };
+    // The chain, not the leaf alone: after a CA succession it carries the
+    // cross-signed successor, which is what lets a device still holding the
+    // previous CA validate without doing anything.
+    return { key: c.leafKeyPem, cert: c.chainPem || c.leafCertPem };
   };
   server.on('connect', createConnectHandler({ config, accountManager, ensureLeaf, logDir, hooks, log: console.error, sx, egress, policy: destinations }));
   // Remote Control's real-time channel is a WebSocket, not a request/response
