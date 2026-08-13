@@ -180,6 +180,20 @@ export function mergeSettingsEnv(existing, env) {
 
   // Rewrite in place, right to left, so earlier offsets stay valid.
   const inner = membersOf(text, envMember.valueStart);
+
+  // A key that appears twice has no single meaning to preserve, and preserving
+  // meaning is the whole reason this edits text instead of parsing. The scan
+  // would update the first occurrence and `JSON.parse` takes the last, so the
+  // write reported success while the old value stayed in force — valid JSON,
+  // nothing thrown, wrong behaviour. Refused, like an `env` that is not an
+  // object. Duplicates elsewhere in the document are not ours to judge.
+  const counts = new Map();
+  for (const m of inner.members) counts.set(m.key, (counts.get(m.key) || 0) + 1);
+  const twice = [...counts].filter(([, n]) => n > 1).map(([k]) => k);
+  if (twice.length) {
+    throw new Error(`settings.json lists ${twice.join(', ')} more than once under \`env\` — ` +
+      'remove the duplicate, since which one is meant cannot be told from the file');
+  }
   let out = text;
   const additions = [];
   for (const [k, v] of Object.entries(env)) {

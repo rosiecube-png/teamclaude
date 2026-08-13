@@ -80,6 +80,28 @@ test('NFR-26 — the edges of every range, on both sides', () => {
   for (const ip of outside) assert.equal(blockedAddressReason(ip), null, `${ip} should be allowed`);
 });
 
+// One member per class is what the CIDR test above warns against, and this file
+// did exactly that for address *spellings*: three `::ffff:` forms and nothing
+// else. An independent review found `::169.254.169.254` — the deprecated
+// IPv4-compatible form, same bytes, no `ffff` marker — walking straight through.
+// A table of the RFC 4291 forms rather than a handful of examples.
+test('NFR-21.6 — every IPv6 spelling of a blocked v4 address is blocked', () => {
+  for (const v4 of ['127.0.0.1', '169.254.169.254', '10.0.0.1', '192.168.1.1', '172.16.0.1']) {
+    for (const form of [`::ffff:${v4}`, `::${v4}`]) {
+      assert.ok(blockedAddressReason(form), `${form} is ${v4} and was allowed`);
+    }
+  }
+  // and the two that are addresses in their own right
+  for (const a of ['::', '::1']) assert.ok(blockedAddressReason(a), `${a} was allowed`);
+});
+
+test('NFR-21.6 — a public address is not blocked by any of those spellings', () => {
+  // The widening must not swallow everything: ::ffff:93.184.216.34 is a real
+  // public address wearing the same hat, and has to stay reachable.
+  assert.equal(blockedAddressReason('::ffff:93.184.216.34'), null);
+  assert.equal(blockedAddressReason('2001:db8::1'), null);
+});
+
 test('every blocked range records why it is there', () => {
   assert.ok(BLOCKED_RANGES.length > 10, 'that is a sample, not a set');
   for (const r of BLOCKED_RANGES) {

@@ -1032,6 +1032,73 @@ product was provably correct and the test never triggered it.
 
 ---
 
+## 2026-08-10 — an independent review, and what it found
+
+Every line of M1 was written, tested, reviewed and merged by one author. A `qa-reviewer`
+read the seven source files at tag `m1` with no stake in them. It earned its place in the
+first finding.
+
+| | |
+| --- | --- |
+| Register | n/a — no requirement was wrong |
+| Test | `connect-policy`, `enrol`, `x509`, `remote-control-relay` |
+| Src | `destination-policy.js`, `enrol.js`, `x509.js`, `server.js` |
+| Others | n/a |
+
+### HIGH — an address form walked straight through
+
+`::169.254.169.254` — the deprecated IPv4-compatible spelling, the same sixteen bytes as
+`::ffff:169.254.169.254` apart from two marker octets — was **allowed**. `mappedV4` matched
+only the `ffff` marker.
+
+Reachable the way the file itself describes the threat: an allowlisted host whose AAAA
+record the operator does not control. Now three wrappings are folded — mapped, compatible,
+and the NAT64 well-known prefix — and a public address in any of them still passes.
+
+**The test was the textbook mistake this file warns about.** Three `::ffff:` spellings and
+nothing else, while the CIDR test three lines above says in a comment that one member per
+class passes while the boundary is wrong. The warning was applied to ranges and not to
+spellings. It is a table now.
+
+### MEDIUM — a duplicate key reported success and changed nothing
+
+`mergeSettingsEnv` updated the first occurrence; `JSON.parse` takes the last. A credential
+rotation against a hand-edited `settings.json` would report success and leave the old value
+in force — valid JSON, nothing thrown.
+
+Refused rather than repaired: a document with the same key twice has no single meaning to
+preserve, and preserving meaning is why this edits text instead of parsing. Duplicates
+outside `env` are not ours to judge, and a test says so.
+
+### LOW, and the one that bit back
+
+`safeKeyEqual` returned early on a length mismatch, so the comparison time carried the
+length of the configured key. Both sides are hashed first now.
+
+CA certificates carried no `pathLenConstraint`. Adding it as **0** broke every cross-signed
+succession with `PATH_LENGTH_EXCEEDED` — and **62 tests stayed green**, because each
+verified one link at a time and a chain is not the sum of its links. That gap was the
+review’s first test-weakness finding, written before the break happened.
+
+The missing test came first, then the value: `1`, which is the depth this PKI actually has
+— anchor, cross-signed successor, leaf. Two intermediates are refused, checked.
+
+### The flaky relay test
+
+Not a review finding, and carried as *pre-existing* since the milestone began. The upstream
+died on a 10ms timer that raced the client’s read of the 101; when the reset won there was
+nothing for the handshake assertion to match. It dies on the first relayed byte now: 8 runs,
+8 passes.
+
+### What this says about the milestone
+
+The retrospective already said *the checkers needed checking*. This is the same finding
+arriving from outside: the two defects that mattered were both invisible to a suite that
+looked thorough, and the more serious one had a comment three lines away describing exactly
+the mistake being made.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

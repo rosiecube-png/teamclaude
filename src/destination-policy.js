@@ -96,12 +96,31 @@ export function parseIp(ip) {
   return buf;
 }
 
-/** The v4 bytes inside an IPv4-mapped v6 address, or null. */
+/**
+ * The v4 bytes carried inside a v6 address, whichever way it is wrapped.
+ *
+ * There is more than one wrapping, and checking only the first is how
+ * `::169.254.169.254` walked through: same sixteen bytes as `::ffff:169.254.169.254`
+ * apart from the two marker octets, and the marker was the only thing being
+ * matched. Found by an independent review; the tests here had tried three
+ * `::ffff:` spellings and stopped, which is the one-member-per-class mistake the
+ * range tests in this file explicitly warn about.
+ *
+ *   ::ffff:a.b.c.d    IPv4-mapped     (RFC 4291 §2.5.5.2)
+ *   ::a.b.c.d         IPv4-compatible (RFC 4291 §2.5.5.1, deprecated but legal to write)
+ *   64:ff9b::a.b.c.d  NAT64 well-known prefix (RFC 6052)
+ *
+ * Folding the compatible form also catches `::` and `::1`, which land in
+ * `0.0.0.0/8` and `127.0.0.0/8` — both already blocked, so this only widens.
+ */
 function mappedV4(bytes) {
   if (bytes.length !== 16) return null;
-  const prefixZero = bytes.subarray(0, 10).every((b) => b === 0);
-  if (!prefixZero) return null;
-  if (bytes[10] === 0xff && bytes[11] === 0xff) return bytes.subarray(12); // ::ffff:a.b.c.d
+  const zeroPrefix = bytes.subarray(0, 10).every((b) => b === 0);
+  if (zeroPrefix && bytes[10] === 0xff && bytes[11] === 0xff) return bytes.subarray(12);
+  if (zeroPrefix) return bytes.subarray(12);
+  // 64:ff9b::/96 — the well-known NAT64 prefix, real on networks that run it.
+  if (bytes[0] === 0x00 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b
+      && bytes.subarray(4, 12).every((b) => b === 0)) return bytes.subarray(12);
   return null;
 }
 

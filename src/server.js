@@ -41,12 +41,20 @@ const CONNECTION_SPECIFIC_HEADERS = new Set([
 
 // Constant-time proxy-API-key comparison (both the HTTP gate and the CONNECT
 // gate use it). Returns false on any type/length mismatch without leaking timing.
+/**
+ * Compare two keys without letting the comparison time say anything.
+ *
+ * Hashing first rather than comparing the bytes directly: `timingSafeEqual`
+ * needs equal lengths, so the usual shape returns early on a length mismatch
+ * and the *length* of the configured key leaks. Against a random key that is
+ * worth little, but the fix costs one hash and removes the question.
+ */
 export function safeKeyEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
+  return timingSafeEqual(
+    createHash('sha256').update(a).digest(),
+    createHash('sha256').update(b).digest(),
+  );
 }
 
 // True if a socket's remote address is loopback — the proxy-key gate exempts
