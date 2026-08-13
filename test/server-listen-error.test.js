@@ -9,8 +9,14 @@ import { fileURLToPath } from 'node:url';
 
 const cliPath = fileURLToPath(new URL('../src/index.js', import.meta.url));
 
+// Bind the interface the proxy will bind, not the wildcard. `listen(0)` with no
+// host takes IPv6 any, which on Linux also covers IPv4 and on Windows does not
+// -- so the port was never actually occupied there, the proxy started fine, and
+// the test failed for "the server did not exit" when nothing had gone wrong.
+// The product is correct: bound to the same interface it exits 1 with
+// "Port N is already in use".
 function listen(server) {
-  return new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
 function close(server) {

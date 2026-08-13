@@ -57,7 +57,7 @@ Anything reading the register from before this point is reading a different spec
 | Name constraints on the CA | measured to work, not implemented — RSK-09's residual says so |
 | Two processes with **different** upstreams sharing one certificate directory | a misconfiguration, not a race; 3,367 torn reads in 18,130 |
 | `an upstream socket that dies mid-relay` is flaky | fails 2 runs in 4 on a clean `master` — pre-existing, not caused by M1, not fixed by it |
-| Eight tests fail on Windows | systemd units, shell rc paths, crash-log paths. Identical on a clean `master` worktree; CI on Linux is green |
+| ~~Eight tests fail on Windows~~ | **Closed 2026-08-10.** Diagnosed rather than attributed: all eight were test-side (a fixture binding IPv6 any, `HOME` where Windows reads `USERPROFILE`, a Windows path used as an ESM specifier, and POSIX path shapes for a POSIX-only feature). 599 pass, 0 fail |
 
 ## 5. Retrospective
 

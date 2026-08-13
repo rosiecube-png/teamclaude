@@ -99,7 +99,9 @@ function endOfValue(t, i) {
   i = skipTrivia(t, i);
   if (t[i] === '"') return endOfString(t, i);
   if (t[i] === '{' || t[i] === '[') {
-    const close = t[i] === '{' ? '}' : ']';
+    // One counter for both bracket kinds. Telling them apart would need a stack,
+    // and would only buy rejecting `[1}` — which is not JSON, and this scans a
+    // document the client already parses. Finding the span is the whole job.
     let depth = 0;
     while (i < t.length) {
       i = skipTrivia(t, i);

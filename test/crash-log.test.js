@@ -4,10 +4,13 @@ import { execFile } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getCrashLogPath } from '../src/config.js';
 
-const CRASH_LOG = fileURLToPath(new URL('../src/crash-log.js', import.meta.url));
+// A file URL, not a filesystem path. `import ... from "C:\Users\..."` is not a
+// valid ESM specifier, so on Windows the child failed to load at all — it exited
+// 1, which the first assertion accepted, and wrote nothing, which is why the log
+// was empty rather than wrong.
+const CRASH_LOG = new URL('../src/crash-log.js', import.meta.url).href;
 
 // The handlers end the process, so they can only be exercised from a child.
 // Returns { code, stderr, logged } — the last being what survived on disk.
