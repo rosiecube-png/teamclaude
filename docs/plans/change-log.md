@@ -896,6 +896,104 @@ here, and not fixed here either.
 
 ---
 
+## 2026-08-10 — the certificate surface, reviewed
+
+The first boundary review predates the CA work. Since then a private key was put on disk
+that used to be discarded, an endpoint was added that hands out a trust anchor,
+cross-signing was introduced, and the authorisation gate was rewritten. NFR-27 says a
+review gates the milestone, and none of that had been attacked.
+
+| | |
+| --- | --- |
+| Register | §9 asset inventory corrected · the M1/M2 comparison at §5 corrected · CON-05 marked realised · **RSK-09 added** |
+| Plan | `iso_31000` gained RSK-09 — caught by the guard, not by me |
+| Test | `m1-boundary-review.test.js` → 17 cases |
+| Others | n/a |
+
+### Five attacks, no new findings
+
+| | |
+| --- | --- |
+| Ask the endpoint for the key | serves one certificate, no private key |
+| Reach the key by path | `/teamclaude/ca.key`, `/teamclaude/ca/../ca.key`, percent-encoded — none answers 200; the route is an exact match |
+| Disagree with the fingerprint | the header is the hash of the body it came with, so a pin cannot be defeated by the header alone |
+| Redirect the fetch elsewhere | a 302 is refused. Following it would point a machine at somebody else's anchor, which is the whole game |
+| Choose what the successor contains | `succeedCA` takes only the outgoing CA; the key is freshly generated, the cross-certificate binds that key and no other, and predecessor and successor never share a name |
+
+The key is 0600 on POSIX, asserted.
+
+### Two documents were false
+
+§9 still said the CA private key was *discarded today* and §5 still said *CA key
+discarded*. Both had been true for the life of the project and stopped being true four
+commits earlier. Recording a change in the trace is not the same as correcting what the
+register asserts — the trace says what happened, the register says what **is**.
+
+### A risk that had no entry because the asset had not existed
+
+RSK-09. The honest rating is **L/H**, and the reasoning matters more than the letters: the
+key sits on a host that already holds the account tokens and the leaf key, so a compromise
+there was already total. What it adds is **duration** — the leaf key expires in 90 days,
+this one in 3650 — and recovery is re-enrolment rather than rotation, because a successor
+cross-signed with a stolen key is worth nothing.
+
+Name constraints would bound what a stolen key may sign, and were measured to work
+(`api.anthropic.com` accepted, `evil.example` rejected). Not implemented. The residual says
+so rather than implying otherwise.
+
+### The guard did the work
+
+Adding RSK-09 to §10 and not to the plan's `iso_31000` block failed *the plan and the
+register describe the same risks*. That check exists because this exact omission happened
+once before, by hand, and was found by reading.
+
+---
+
+## 2026-08-10 — M1 closed
+
+| | |
+| --- | --- |
+| Register | a baseline note at the top — several requirements changed *during* M1, so what M2 builds on is not what M1 started with |
+| Plan | `iso_38500.milestone_gate` — the decision, who took it, and the verdict per exit criterion |
+| Closure | [`m1-closure.md`](m1-closure.md) — exit criteria, decision, baseline, carried-over items, retrospective |
+| Others | n/a |
+
+**Accepted**, by the account owner, who at this milestone is also the operator and the only
+stakeholder. G-1 and G-6 are met and demonstrated; G-5 was only ever asked to become
+*observable*.
+
+The caveat is recorded rather than smoothed: G-6's *legible* half holds by the letter of
+NFR-13.1, but a proxy that is simply down produces **silence** — exit 124, zero bytes on
+both streams. That is client behaviour and not ours to shape, and NFR-13.1 says as much,
+but a user meeting it has nothing to go on except knowing to run `enrol --check`.
+
+### The baseline moved during the milestone
+
+FR-16.2 and FR-18 were reworded against measurements, `allowPrivateAddresses` and
+`restrictPorts` were inverted to derive from `proxy.host`, CON-05 went from hypothetical to
+realised, and NFR-17.6, NFR-17.7 and RSK-09 were added. A closure that did not say so would
+leave M2 building on a specification nobody is reading.
+
+### What the retrospective actually says
+
+Three planning defects, each found only by building: a criterion naming a file its task did
+not own; two requirements that could not both hold; a requirement resting on a signal that
+does not exist. Two became guards, one became a reworded requirement.
+
+Eight of eight tasks were finished while G-1 had never been attempted — and the first
+attempt found three defects, all invisible to a green suite because nothing had *used* the
+result.
+
+The FR-18.1 measurement took three attempts and the ASM-30 probe took four, and in both
+cases the wrong versions looked convincing. A coverage guard matched zero rows for its
+whole life; a documentation checker reported eighteen false problems; a mutation proof
+stopped mutating when the tasks it borrowed were completed.
+
+And a running service was stopped for twelve minutes on one weak signal, with no check made
+that would have settled it in a line.
+
+---
+
 ## Open at the end of this sweep
 
 | | |

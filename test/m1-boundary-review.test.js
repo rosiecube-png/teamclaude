@@ -257,3 +257,115 @@ test('F-2 — an absolute-form upgrade request is rejected, not concatenated', a
   assert.match(writes.join(''), /400/,
     'an absolute-form request line was appended to the upstream URL instead of refused');
 });
+
+// ── task-6, second pass: the certificate surface added after the first ──────
+//
+// The first review predates the CA work. Since then a private key was put on
+// disk that used to be discarded, an endpoint was added that hands out a trust
+// anchor, cross-signing was introduced, and the authorisation gate was rewritten
+// to be shared. None of that had been attacked.
+
+test('review — the CA endpoint serves the certificate and never the key', async () => {
+  const proxy = hosted();
+  const port = await listen(proxy);
+  try {
+    const body = await new Promise((resolve) => {
+      const r = http.request({ port, host: '127.0.0.1', path: '/teamclaude/ca',
+        headers: { 'x-api-key': 'k' } },
+      (res) => { let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => resolve(b)); });
+      r.end();
+    });
+    assert.match(body, /BEGIN CERTIFICATE/);
+    assert.doesNotMatch(body, /PRIVATE KEY/,
+      'the endpoint handed out a private key, which would let anyone impersonate the proxy');
+    assert.equal((body.match(/BEGIN CERTIFICATE/g) || []).length, 1,
+      'more than the anchor was served');
+  } finally { proxy.close(); }
+});
+
+test('review — the CA private key is on disk owner-only, and no path serves it', async (t) => {
+  const { statSync, existsSync } = await import('node:fs');
+  const { caCertPath } = await import('../src/mitm.js');
+  const proxy = hosted();
+  const port = await listen(proxy);
+  try {
+    await new Promise((resolve) => {
+      const r = http.request({ port, host: '127.0.0.1', path: '/teamclaude/ca',
+        headers: { 'x-api-key': 'k' } }, (res) => { res.resume(); res.on('end', resolve); });
+      r.end();
+    });
+    const keyPath = caCertPath().replace(/-ca\.pem$/, '-ca.key');
+    assert.ok(existsSync(keyPath), 'the CA key is not being kept, so nothing below is being checked');
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(keyPath).mode & 0o777, 0o600, 'the CA key is readable by others');
+    } else { t.diagnostic('POSIX modes are not meaningful here'); }
+
+    // Nothing under /teamclaude/ reaches it, whatever the path looks like.
+    for (const p of ['/teamclaude/ca.key', '/teamclaude/ca/../ca.key', '/teamclaude/ca%2F..%2Fca.key']) {
+      const code = await new Promise((resolve) => {
+        const r = http.request({ port, host: '127.0.0.1', path: p, headers: { 'x-api-key': 'k' } },
+          (res) => { res.resume(); resolve(res.statusCode); });
+        r.on('error', () => resolve(0));
+        r.end();
+      });
+      assert.notEqual(code, 200, `${p} answered 200`);
+    }
+  } finally { proxy.close(); }
+});
+
+test('review — the fingerprint header describes the body it came with', async () => {
+  // A pin is only worth anything if the header cannot disagree with the bytes.
+  const { createHash } = await import('node:crypto');
+  const proxy = hosted();
+  const port = await listen(proxy);
+  try {
+    const { header, body } = await new Promise((resolve) => {
+      const r = http.request({ port, host: '127.0.0.1', path: '/teamclaude/ca',
+        headers: { 'x-api-key': 'k' } }, (res) => {
+        let b = ''; res.on('data', (d) => { b += d; });
+        res.on('end', () => resolve({ header: res.headers['x-teamclaude-ca-sha256'], body: b }));
+      });
+      r.end();
+    });
+    assert.equal(header, createHash('sha256').update(body).digest('hex'));
+  } finally { proxy.close(); }
+});
+
+test('review — fetching the CA does not follow a redirect', async () => {
+  // A proxy that could redirect the fetch could point a machine at somebody
+  // else's trust anchor, which is the whole game.
+  const { fetchCA } = await import('../src/enrol.js');
+  const request = (_o, cb) => {
+    const res = { statusCode: 302, headers: { location: 'https://evil.example/ca' },
+      on: (e, f) => { if (e === 'end') f(); } };
+    queueMicrotask(() => cb(res));
+    return { on: () => {}, end: () => {} };
+  };
+  await assert.rejects(() => fetchCA('https://k@proxy.example:8443', { request }), /answered 302/);
+});
+
+test('review — a client cannot choose what the successor CA contains', async () => {
+  // succeedCA takes only the outgoing CA. If it accepted a public key or a name
+  // from anywhere else, a client could have itself cross-signed.
+  // (Function.length would not say this: a parameter with a default is not
+  // counted, so an arity check reports 1 whatever the signature is.)
+  const { succeedCA, createCA, loadCA } = await import('../src/x509.js');
+  const { X509Certificate } = await import('node:crypto');
+  const v1 = createCA('v1', 3650);
+  const prev = loadCA(v1.certPem, v1.keyPem);
+
+  const a = succeedCA(prev);
+  const b = succeedCA(prev);
+  assert.notEqual(a.caKeyPem, b.caKeyPem, 'the successor key is not freshly generated each time');
+
+  const cross = new X509Certificate(a.crossCertPem);
+  assert.ok(cross.verify(new X509Certificate(v1.certPem).publicKey),
+    'the successor is not signed by the CA it replaces');
+  assert.notEqual(cross.subject, new X509Certificate(v1.certPem).subject,
+    'successor and predecessor share a name, so a verifier cannot tell them apart');
+  // The public key in the cross-certificate is the one succeedCA just made, not
+  // anything a caller could have supplied.
+  assert.ok(cross.publicKey.export({ type: 'spki', format: 'der' })
+    .equals(new X509Certificate(a.caCertPem).publicKey.export({ type: 'spki', format: 'der' })),
+  'the cross-certificate binds a key other than the successor it returned');
+});
