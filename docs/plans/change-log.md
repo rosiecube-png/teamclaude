@@ -994,6 +994,44 @@ that would have settled it in a line.
 
 ---
 
+## 2026-08-10 — the eight Windows failures were tests, not the product
+
+They were reported as *pre-existing, platform, identical on a clean master* every time the
+suite ran, and never diagnosed. That is an attribution, not a diagnosis, and it let a
+permanently red suite stay red on a developer’s own machine. **599 pass, 0 fail** now.
+
+| | |
+| --- | --- |
+| Closure | `m1-closure.md` §4 — the carried-over entry is closed |
+| Test | `alias`, `crash-log`, `server-listen-error`, `service` |
+| Src | `alias.js` — `rcPathForShell` takes `home`, matching `launchAgentPath` |
+| Others | n/a — no behaviour changed |
+
+### What each actually was
+
+| | |
+| --- | --- |
+| `server exits cleanly when the port is in use` | The fixture bound `listen(0)` with no host — IPv6 any, which covers IPv4 on Linux and **does not on Windows**. The port was never occupied, the proxy started correctly, and the test failed for “did not exit” when nothing had gone wrong. Bound to the interface under test it exits 1 with *Port N is already in use* |
+| `rcPathForShell` | The test set `HOME`; `os.homedir()` reads `USERPROFILE` on Windows, so it steered nothing and asserted against the real home directory |
+| `teamclaudeRef` | Asserted the path contains `/` |
+| crash-log × 3 | The child imported a Windows path as an ESM specifier, which is not one. It failed to load, exited 1 — which the first assertion accepted — and wrote nothing, so the log read as empty rather than wrong |
+| `service` × 2 | POSIX path shapes for a POSIX-only feature: `teamclaude service` answers *no service integration for win32*. Skipped, with that reason |
+
+### The one product change
+
+`rcPathForShell(shell, home = homedir())`. It read `homedir()` inline, so a test could only
+steer it through the environment — and on Windows that channel does not exist. `service.js`
+already took `home` as a parameter; this now matches.
+
+### Why it was worth doing
+
+A suite that is red on a developer’s own machine stops being read. Eight failures were
+carried through this entire milestone as background noise, and the one that looked most
+like a real defect — a server that would not exit on a listen error — was the one where the
+product was provably correct and the test never triggered it.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
