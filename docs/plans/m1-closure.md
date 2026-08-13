@@ -56,7 +56,7 @@ Anything reading the register from before this point is reading a different spec
 | Four `deferred` assumptions | vendor documentation, not verifiable here; each records why |
 | Name constraints on the CA | measured to work, not implemented — RSK-09's residual says so |
 | Two processes with **different** upstreams sharing one certificate directory | a misconfiguration, not a race; 3,367 torn reads in 18,130 |
-| `an upstream socket that dies mid-relay` is flaky | fails 2 runs in 4 on a clean `master` — pre-existing, not caused by M1, not fixed by it |
+| ~~`an upstream socket that dies mid-relay` is flaky~~ | **Closed 2026-08-13.** The upstream fixture died on a 10 ms timer that raced the client's read of the 101; when the reset won, nothing was left for the handshake assertion to match. It dies on the first relayed byte now — 8 runs, 8 passes |
 | ~~Eight tests fail on Windows~~ | **Closed 2026-08-10.** Diagnosed rather than attributed: all eight were test-side (a fixture binding IPv6 any, `HOME` where Windows reads `USERPROFILE`, a Windows path used as an ESM specifier, and POSIX path shapes for a POSIX-only feature). 599 pass, 0 fail |
 
 ## 5. Retrospective
@@ -116,3 +116,28 @@ Mutation testing. Every fix in this milestone was reverted to confirm the suite 
 and it caught four tests that asserted nothing. Where a mutation survived, it was recorded
 as unpinned rather than dressed up — the two certificate re-checks are redundant with each
 other and no single-line mutation shows either working, and the change log says so.
+
+## 6. Post-closure addendum — 2026-08-13
+
+The gate above was taken before three pieces of QC ran. Recorded here because a closure
+that stops being true silently is worse than one that was amended; the full trace of each
+is in [`change-log.md`](change-log.md).
+
+**An independent review found a HIGH after the gate.** A `qa-reviewer` with no stake in
+the code read the seven M1 source files at tag `m1`: one HIGH (a v4-in-v6 address spelling
+walked through the private-address block), one MEDIUM (a duplicate `env` key made a
+credential rotation report success while changing nothing), two LOW, four test-weakness
+notes. All are fixed and pinned. NFR-27's *"a milestone does not close with an unresolved
+high finding"* held at the gate only because the finding was not yet known — the review
+that would have found it ran after. **For M2: the independent review runs before the gate,
+not after it.**
+
+**The load question is answered (F19, F20).** NFR-06 and NFR-07 carried microbenchmarks
+into the gate; under concurrency they now carry measurements — steady state ≈2,100 req/s
+at 50-way with p99 37 ms and zero errors, 30/30 idle SSE streams surviving beside churn,
+and a first-30-seconds tail that is the storm ramp doing its designed job. The measuring
+took three runs to get honest: the first chained through the live instance via an inherited
+`HTTPS_PROXY` (now ASM-44), and the second stalled on the probe's own mock cancelling its
+timer — §5's *"measuring is a skill"* did not stop being true at the gate.
+
+**The relay flake carried in §4 is closed**, diagnosed rather than waited out.
