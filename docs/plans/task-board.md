@@ -33,6 +33,16 @@
 - **Test Approach**: tdd (unit)
 - **Description**: leafCovers() (src/mitm.js:54) checks the CA signature and the SANs and never reads the validity dates, so an expired leaf is reused rather than replaced and every intercepted TLS connection fails with no self-healing. Lifetimes at issuance are CA 3650 days (src/x509.js:141) and leaf 825 days (:151). Implement docs/specs/m1-certificates.md.
 - **Acceptance Criteria**:
+    - NFR-17.1 — leafCovers rejects an expired leaf, and one whose remaining life is below the renewal threshold
+    - NFR-17.2 — the same check applies to the CA certificate; a fresh leaf signed by an expired CA is replaced
+    - NFR-17.3 — regeneration logs the reason: expired, near expiry, or host mismatch
+    - NFR-17.4 — leafDays and renewBeforeDays are configurable under proxy.certs, with defaults shorter than today's 825
+    - A leaf inside the window that covers the hosts is still reused — no needless churn
+    - docs/configuration.md documents proxy.certs
+    - NFR-17.5 — the renewal check is not memoised for the process lifetime, and a replaced chain reaches new connections without a restart; both certsPromise (server.js:182) and serverPromises (mitm.js:131) must be addressed
+    - A connection open across a replacement is not disturbed (ASM-17: TLS validates at handshake, measured)
+    - NFR-17.6 — a leaf renewal does not change the CA, so enrolled devices are unaffected
+    - NFR-17.7 — a CA that must be replaced is succeeded by one it cross-signs, and both are served, so a device holding the predecessor keeps working
   - NFR-17.1 — leafCovers rejects an expired leaf, and one whose remaining life is below the renewal threshold
   - NFR-17.2 — the same check applies to the CA certificate; a fresh leaf signed by an expired CA is replaced
   - NFR-17.3 — regeneration logs the reason: expired, near expiry, or host mismatch

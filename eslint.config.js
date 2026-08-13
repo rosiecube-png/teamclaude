@@ -26,6 +26,7 @@ export default [
         fetch: 'readonly',
         AbortController: 'readonly',
         AbortSignal: 'readonly',
+        queueMicrotask: 'readonly',
       },
     },
     rules: {

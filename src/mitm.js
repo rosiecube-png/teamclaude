@@ -19,13 +19,20 @@ import net from 'node:net';
 import tls from 'node:tls';
 import http2 from 'node:http2';
 import { getConfigPath } from './config.js';
-import { generateCertChain, DEFAULT_LEAF_DAYS } from './x509.js';
+import { generateCertChain, succeedCA, loadCA, createLeaf, DEFAULT_LEAF_DAYS, DEFAULT_CA_DAYS } from './x509.js';
 import { createDestinationPolicy, pinnedLookup, TEST_HOST } from './destination-policy.js';
 import { createProxyRequestListener, safeKeyEqual, isLoopbackAddr, relayUpgrade, resolveAccountPin } from './server.js';
 
 const CA_CERT = 'teamclaude-ca.pem';
 const LEAF_CERT = 'teamclaude-leaf.pem';
 const LEAF_KEY = 'teamclaude-leaf.key';
+// The CA private key, kept so a leaf renewal can re-sign under the *same* CA.
+// Discarding it meant every renewal minted a new CA and every enrolled device
+// stopped verifying — measured, six rotations, six failures.
+const CA_KEY = 'teamclaude-ca.key';
+// The successor CA, signed by the one it replaces. Served beside the leaf so a
+// device holding only the predecessor still validates (measured authorized=true).
+const CA_CROSS = 'teamclaude-ca-cross.pem';
 
 // A built-in host the MITM proxy intercepts and answers itself (never forwarded
 // upstream). Lets you verify the proxy + CA end-to-end with no credentials:
@@ -128,10 +135,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Shipped certificate policy. See `proxy.certs` in docs/configuration.md. */
 export const CERT_DEFAULTS = Object.freeze({
   leafDays: DEFAULT_LEAF_DAYS,
+  caDays: DEFAULT_CA_DAYS,
   renewBeforeDays: 30,
 });
 
-const positiveDays = (v, fallback) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback);
+// Not floored. A lifetime under a day is meaningless in production and the only
+// way to exercise renewal in a test that finishes: flooring turned 1/2880 into
+// **zero**, so the leaf was born expired and every handshake failed with
+// CERT_HAS_EXPIRED while the cross-signature underneath it was perfectly good.
+const positiveDays = (v, fallback) => (Number.isFinite(v) && v > 0 ? v : fallback);
 
 /**
  * Resolve `proxy.certs` against the shipped defaults.
@@ -145,9 +157,13 @@ const positiveDays = (v, fallback) => (Number.isFinite(v) && v > 0 ? Math.floor(
 export function certOptions(config) {
   const certs = config?.proxy?.certs || {};
   const leafDays = positiveDays(certs.leafDays, CERT_DEFAULTS.leafDays);
+  // Fractional, and not floored, so a test can compress months into minutes:
+  // 1/1440 is one minute. Nothing else about the logic changes at that scale,
+  // which is the point of being able to set it.
+  const caDays = positiveDays(certs.caDays, CERT_DEFAULTS.caDays);
   const asked = positiveDays(certs.renewBeforeDays, CERT_DEFAULTS.renewBeforeDays);
-  if (asked < leafDays) return { leafDays, renewBeforeDays: asked, clamped: null };
-  return { leafDays, renewBeforeDays: Math.max(1, Math.floor(leafDays / 2)), clamped: asked };
+  if (asked < leafDays) return { leafDays, caDays, renewBeforeDays: asked, clamped: null };
+  return { leafDays, caDays, renewBeforeDays: leafDays / 2, clamped: asked };
 }
 
 function expiryProblem(what, cert, renewBeforeDays) {
@@ -261,12 +277,94 @@ async function readUsableChain(hosts, opts, { retry = true } = {}) {
     return retry ? readUsableChain(hosts, opts, { retry: false }) : null;
   }
   const problem = certReuseProblem(caCertPem, leafCertPem, hosts, opts);
-  if (!problem) return { caPath: fpath(CA_CERT), caCertPem, leafCertPem, leafKeyPem };
+  if (!problem) return chainResult(caCertPem, leafCertPem, leafKeyPem, await readIf(fpath(CA_CROSS)));
   if (retry && /not signed by the stored CA|could not be read/.test(problem)) {
     await sleep(5);
     return readUsableChain(hosts, opts, { retry: false });
   }
   return null;
+}
+
+/**
+ * Bring the stored chain back to health, doing the least that will.
+ *
+ * Three cases, in increasing cost to the devices that trust it:
+ *
+ *   the CA is fine, the leaf is not   re-sign a leaf under the same CA — devices
+ *                                     notice nothing, which is what ASM-16 said
+ *                                     all along and was not true until now
+ *   the CA is near its end            issue a successor, cross-signed by the CA
+ *                                     being replaced, and serve both — devices
+ *                                     still holding the predecessor keep working
+ *   there is nothing usable at all    mint from scratch; devices must re-enrol
+ */
+async function repairChain(hosts, opts, log) {
+  const [caPem, caKeyPem] = await Promise.all([readIf(fpath(CA_CERT)), readIf(fpath(CA_KEY))]);
+
+  if (caPem && caKeyPem) {
+    let ca;
+    try { ca = loadCA(caPem, caKeyPem); } catch { ca = null; }
+    if (ca) {
+      const caLeft = (ca.notAfter.getTime() - Date.now()) / DAY_MS;
+      if (caLeft > opts.renewBeforeDays) {
+        // The CA is good. Only the leaf needed replacing.
+        log('[TeamClaude] renewing the MITM leaf under the existing CA — enrolled devices are unaffected');
+        const leaf = createLeaf(hosts, ca, opts.leafDays);
+        // Carry the cross-signature forward. Dropping it here put the chain back
+        // to one certificate on the first leaf renewal after a succession, and
+        // devices still holding the predecessor lost their bridge mid-flight —
+        // measured: connects, connects, connects, then UNABLE_TO_VERIFY.
+        const carried = await readIf(fpath(CA_CROSS));
+        await writeChain({
+          caCertPem: caPem, caKeyPem, leafCertPem: leaf.certPem, leafKeyPem: leaf.keyPem,
+          crossCertPem: carried,
+        });
+        return chainResult(caPem, leaf.certPem, leaf.keyPem, carried);
+      }
+      // The CA itself is running out. Hand over to a successor it signs, so a
+      // device that only knows the outgoing CA can still verify.
+      log(`[TeamClaude] the MITM CA expires in ${caLeft.toFixed(2)} days — issuing a cross-signed successor`);
+      const next = succeedCA(ca, { caDays: opts.caDays });
+      const nextCa = loadCA(next.caCertPem, next.caKeyPem);
+      const leaf = createLeaf(hosts, nextCa, opts.leafDays);
+      await writeChain({
+        caCertPem: next.caCertPem, caKeyPem: next.caKeyPem,
+        leafCertPem: leaf.certPem, leafKeyPem: leaf.keyPem, crossCertPem: next.crossCertPem,
+      });
+      return chainResult(next.caCertPem, leaf.certPem, leaf.keyPem, next.crossCertPem);
+    }
+  }
+
+  log(`[TeamClaude] minting a MITM certificate chain for ${hosts.join(', ')} ` +
+      `(${opts.leafDays}-day leaf under a ${opts.caDays}-day CA)`);
+  const chain = generateCertChain(hosts, { leafDays: opts.leafDays, caDays: opts.caDays });
+  await writeChain(chain);
+  return chainResult(chain.caCertPem, chain.leafCertPem, chain.leafKeyPem, null);
+}
+
+async function writeChain({ caCertPem, caKeyPem, leafCertPem, leafKeyPem, crossCertPem = null }) {
+  await atomicWrite(fpath(CA_CERT), caCertPem, 0o644);
+  await atomicWrite(fpath(CA_KEY), caKeyPem, 0o600);
+  await atomicWrite(fpath(LEAF_CERT), leafCertPem, 0o644);
+  await atomicWrite(fpath(LEAF_KEY), leafKeyPem, 0o600);
+  if (crossCertPem) await atomicWrite(fpath(CA_CROSS), crossCertPem, 0o644);
+  else await rm(fpath(CA_CROSS), { force: true }).catch(() => {});
+}
+
+/**
+ * What a caller gets. `cert` is the chain to present: the leaf, and the
+ * cross-signed successor when there is one, so a device trusting either CA
+ * validates. `caCertPem` is what a *newly* enrolled device should be handed.
+ */
+function chainResult(caCertPem, leafCertPem, leafKeyPem, crossCertPem) {
+  return {
+    caPath: fpath(CA_CERT),
+    caCertPem,
+    leafCertPem,
+    leafKeyPem,
+    crossCertPem: crossCertPem || null,
+    chainPem: crossCertPem ? `${leafCertPem}${crossCertPem}` : leafCertPem,
+  };
 }
 
 /** Mint and write a chain, holding `release` if the lock was taken. */
@@ -282,27 +380,13 @@ async function regenerate(hosts, opts, log, unlocked, release = null) {
     const [ca, leaf, key] = await Promise.all([
       readIf(fpath(CA_CERT)), readIf(fpath(LEAF_CERT)), readIf(fpath(LEAF_KEY)),
     ]);
-    const suffix = unlocked ? ` (${unlocked})` : '';
-    if (ca && leaf && key) {
-      log(`[TeamClaude] regenerating the MITM certificate chain: ` +
-          `${certReuseProblem(ca, leaf, hosts, opts)}${suffix}`);
-    } else {
-      // First run. Say what policy is in force, since this is the one moment an
-      // operator sees it without going looking.
-      log(`[TeamClaude] minting a MITM certificate chain for ${hosts.join(', ')} ` +
-          `(${opts.leafDays}-day leaf, renewing ${opts.renewBeforeDays} days early)${suffix}`);
-    }
-
-    const chain = generateCertChain(hosts, { leafDays: opts.leafDays }); // caKeyPem intentionally discarded
-    await atomicWrite(fpath(CA_CERT), chain.caCertPem, 0o644);
-    await atomicWrite(fpath(LEAF_CERT), chain.leafCertPem, 0o644);
-    await atomicWrite(fpath(LEAF_KEY), chain.leafKeyPem, 0o600);
-    return {
-      caPath: fpath(CA_CERT),
-      caCertPem: chain.caCertPem,
-      leafCertPem: chain.leafCertPem,
-      leafKeyPem: chain.leafKeyPem,
-    };
+      const suffix = unlocked ? ` (${unlocked})` : '';
+      if (ca && leaf && key) {
+        log(`[TeamClaude] the MITM chain needs work: ${certReuseProblem(ca, leaf, hosts, opts)}${suffix}`);
+      }
+      // Do the least that restores health: re-sign the leaf under the same CA
+      // where possible, hand over to a cross-signed successor where not.
+      return repairChain(hosts, opts, log);
   } finally {
     if (release) await release();
   }

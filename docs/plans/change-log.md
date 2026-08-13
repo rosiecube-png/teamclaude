@@ -779,6 +779,123 @@ should be inferred from a timestamp when the machine can be asked.
 
 ---
 
+## 2026-08-10 — the CA stops changing under the devices that trust it
+
+A device is handed a CA at enrolment and holds it. Renewing the leaf minted a
+**new CA** every time, because the CA key was discarded and there was nothing to
+re-sign with. With the shipped 90/30 policy that is roughly every 60 days, and
+every enrolled machine stops verifying on the day it happens.
+
+Compressed onto a one-minute CA so it could be watched:
+
+```
+device enrolled with CA 56AB6F76
+ +25s  proxy serves CA 9EC7E162   device can verify: NO
+ +50s                  3528CE4D   NO
+ +75s                  D3A340F2   NO      … six rotations, six failures
+```
+
+| | |
+| --- | --- |
+| Register | ASM-16 becomes true — "a leaf swap costs the client nothing" was not, because a leaf swap swapped the CA |
+| Spec | `m1-certificates.md` — §2.2 anticipated exactly this and nobody closed it |
+| Test | `test/cert-lifetime.test.js`, `test/cert-concurrency.test.js` |
+| Others | pending — the distribution half is not in this change |
+
+### What it does now
+
+| Situation | Action | Cost to a device |
+| --- | --- | --- |
+| CA fine, leaf due | re-sign a leaf under the same CA | none |
+| CA near its end | issue a successor **cross-signed by the CA being replaced**, serve both | none |
+| nothing usable | mint from scratch | re-enrolment |
+
+Same accelerated clock, after:
+
+```
+t+ 13s … t+ 78s   same CA,      chain:1   device connects
+t+ 92s … t+118s   successor,    chain:2   device connects
+t+118s onward     CERT_HAS_EXPIRED
+```
+
+The last line is not a defect. The device's **own anchor** was a 120-second
+certificate; cross-signing carries a device across rotations, not past the
+expiry of the thing it trusts. That boundary is real and is the one reason a
+re-enrolment is ever needed.
+
+### Four defects found by running it rather than reasoning about it
+
+| | |
+| --- | --- |
+| Every CA used the same CN | The cross-signed certificate had identical subject and issuer, indistinguishable from a self-signed root. Path building treated it as its own anchor and refused — eight rotations, eight refusals, with a valid cross-signature sitting in the chain |
+| `positiveDays` floored its input | `1/2880` became **0**, so the leaf was born expired and every handshake failed `CERT_HAS_EXPIRED` while the crypto underneath was correct |
+| The cross-signature was dropped on the next leaf renewal | Chain went back to one certificate and devices lost the bridge mid-flight: connects, connects, connects, `UNABLE_TO_VERIFY` |
+| `loadCA` did not check the key against the certificate | The two files are written separately, so one can be left over. Signing with a mismatched key yields a leaf claiming an issuer that cannot have issued it — valid bytes, unusable chain. Found by a concurrency test that plants exactly that state |
+
+None of these is visible from the code. Each needed a rotation to actually
+happen, which is what the accelerated clock is for.
+
+### A test that destabilised its neighbours
+
+The contention test spawns processes that mint RSA keypairs, and under the full
+suite that was enough to make a timing-sensitive relay test fail — in CI once,
+and locally. It passes 3/3 alone. The work is halved; the relay test is quiet
+again. A test that is correct and still breaks the run is not finished.
+
+### Not in this change
+
+`/teamclaude/ca` and enrolment fetching it. The CA is stable now, so a device
+needs it **once** rather than every two months — which is what made the manual
+copy the blocker. Automating that copy is the next piece, not this one.
+
+---
+
+## 2026-08-10 — the operator stops carrying a file
+
+The CA is stable now, so a machine needs it **once**. `/teamclaude/ca` serves it and
+`enrol` fetches it, which is what turns "copy this to every PC" into one command.
+
+| | |
+| --- | --- |
+| Register | FR-16.2 — the M3 deferral is withdrawn; distribution is M1 because it is what the purpose asks for |
+| Spec | `m1-enrolment.md` §3.2 |
+| Test | `test/enrol.test.js` — fetch, pin, refusal, and `--ca` still winning |
+| Docs | `enrol --ca-sha256` in `--help` |
+
+The channel is the edge's own publicly-trusted TLS, which does **not** depend on the
+certificate being fetched — so a rotation can never lock a machine out of collecting what
+it needs. Trust-on-first-use by default; `--ca-sha256 <hex>` refuses anything else, which
+means the operator publishes a string rather than moving a file. `--ca <file>` stays for
+checking it out of band.
+
+Verified end to end against a proxy on an ephemeral port: the endpoint answers with
+`x-teamclaude-ca-sha256`, `teamclaude enrol` with no file installs it, and the hash of what
+landed matches what was served.
+
+### A gate that had a copy of itself
+
+Probing the new endpoint turned up something older. The request path carried its own inline
+auth check reading `isLoopbackAddr` directly, so `proxy.connect.allowLoopbackClients` — the
+switch NFR-20.2 exists for — did nothing there. task-6 introduced `clientAuthorized()` and
+gave it to the upgrade path; the request path kept its copy. All three egress paths use the
+one gate now.
+
+### A false alarm, recorded because it was convincing
+
+The first probe reported the CA endpoint answering **200 with no key**. It was the probe:
+`${k:+-H ...}` omitted the header entirely for the empty case, so nothing was sent and
+loopback exemption applied. A wrong key has always been 401. Worth writing down because the
+output looked exactly like a real hole, and the finding above was found while chasing it.
+
+### An unrelated flake, attributed
+
+`an upstream socket that dies mid-relay tears down the pair` fails intermittently. It was
+tempting to blame this session's concurrency tests, and reducing their load did help — but
+on a clean `master` worktree it fails **2 runs in 4** on its own. Pre-existing, not caused
+here, and not fixed here either.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
