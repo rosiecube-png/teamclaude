@@ -25,7 +25,13 @@ test('service kind follows the platform', () => {
   assert.equal(serviceKind('win32'), null);
 });
 
-test('unit files land in the per-user locations', () => {
+// These assert POSIX path shapes for a POSIX-only feature: `teamclaude service`
+// answers "no service integration for win32" and does nothing else there. Making
+// the strings platform-agnostic would be checking that `join` works rather than
+// that a LaunchAgent lands where launchd looks for it.
+const posixOnly = { skip: process.platform === 'win32' && 'launchd and systemd do not exist here' };
+
+test('unit files land in the per-user locations', posixOnly, () => {
   assert.equal(launchAgentPath('/Users/x'), `/Users/x/Library/LaunchAgents/${LABEL}.plist`);
   assert.equal(systemdUnitPath('/home/x', null), '/home/x/.config/systemd/user/teamclaude.service');
   assert.equal(systemdUnitPath('/home/x', '/cfg'), '/cfg/systemd/user/teamclaude.service');
@@ -35,7 +41,7 @@ test('unit files land in the per-user locations', () => {
 // The regression this guards: process.execPath on a Homebrew node points into
 // the versioned Cellar directory, which the next `brew upgrade node` deletes.
 // The PATH symlink survives upgrades and is what belongs in a unit file.
-test('resolveExec prefers a PATH symlink over the versioned real path', () => {
+test('resolveExec prefers a PATH symlink over the versioned real path', posixOnly, () => {
   const exec = resolveExec({
     execPath: '/opt/homebrew/Cellar/node/26.5.0_1/bin/node',
     argv1: '/opt/homebrew/bin/teamclaude',

@@ -97,7 +97,14 @@ function buildCert({ subjectCN, issuerCN, spkiDer, signKey, isCA, altDnsNames = 
   const notAfter = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
   const extList = [];
-  extList.push(ext('2.5.29.19', true, isCA ? seq([bool(true)]) : seq([]))); // basicConstraints
+  // pathLenConstraint 1, not 0. The chain is anchor -> cross-signed successor ->
+  // leaf, so exactly one CA may follow this one. 0 was tried first and broke
+  // every succession with PATH_LENGTH_EXCEEDED while 62 tests stayed green,
+  // because each of them verified one link at a time and a chain is not the sum
+  // of its links. Stating the real depth means a verifier enforces it instead of
+  // taking our word, and refuses anything deeper.
+  extList.push(ext('2.5.29.19', true,
+    isCA ? seq([bool(true), integer(Buffer.from([1]))]) : seq([]))); // basicConstraints
   extList.push(ext('2.5.29.15', true, isCA
     ? keyUsage([0, 5, 6])   // digitalSignature, keyCertSign, cRLSign
     : keyUsage([0, 2])));   // digitalSignature, keyEncipherment

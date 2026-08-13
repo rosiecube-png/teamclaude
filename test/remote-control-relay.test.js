@@ -136,7 +136,11 @@ test('an upstream socket that dies mid-relay tears down the pair instead of cras
   upstream.on('upgrade', (req, socket) => {
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
     // RST rather than FIN: what a dropped link looks like to the relay.
-    setTimeout(() => socket.resetAndDestroy(), 10);
+    // Triggered by the first relayed byte, not by a clock. A 10ms timer raced
+    // the client's read of the 101: when the reset won, the handshake assertion
+    // had nothing to match and the test failed for reasons with nothing to do
+    // with the relay. It failed 2 runs in 4 on a clean master.
+    socket.once('data', () => socket.resetAndDestroy());
   });
 
   const proxy = http.createServer();

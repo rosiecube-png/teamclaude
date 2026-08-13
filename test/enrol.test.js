@@ -110,6 +110,29 @@ test('FR-03.3 — an existing env block is merged into, not replaced', () => {
   assert.equal(JSON.parse(out).theme, 'dark');
 });
 
+test('a duplicate key under env is refused rather than half-updated', () => {
+  // Found by an independent review. The scan updated the first occurrence and a
+  // reader takes the last, so enrolment reported success while the old value
+  // stayed in force — valid JSON, nothing thrown, wrong behaviour.
+  //
+  // Refused rather than fixed: a document with the same key twice does not have
+  // one meaning to preserve, and preserving meaning is this function's whole
+  // job. Same treatment as an `env` that is not an object.
+  const dup = '{\n  "env": {\n    "HTTPS_PROXY": "http://old:1",\n    "HTTPS_PROXY": "http://old2:1"\n  }\n}\n';
+  assert.throws(() => mergeSettingsEnv(dup, { HTTPS_PROXY: 'https://new:8443' }),
+    /more than once/,
+    'a half-applied update is worse than a refusal, because it reports success');
+});
+
+test('a key repeated OUTSIDE env is none of our business', () => {
+  // Only the block being edited has to be unambiguous.
+  const dup = '{\n  "theme": "dark",\n  "theme": "light",\n  "env": { "NO_PROXY": "localhost" }\n}\n';
+  const out = mergeSettingsEnv(dup, { HTTPS_PROXY: 'https://p:8443' });
+  assert.equal(JSON.parse(out).env.HTTPS_PROXY, 'https://p:8443');
+  assert.ok(out.includes('"theme": "dark"') && out.includes('"theme": "light"'),
+    'an unrelated duplicate was touched');
+});
+
 test('FR-03.4 — merging is idempotent to the byte', () => {
   const env = { HTTPS_PROXY: 'https://p:8443', NO_PROXY: 'localhost,127.0.0.1,::1' };
   const once = mergeSettingsEnv(FIXTURE, env);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { aliasLine, rcPathForShell, teamclaudeRef, installAlias, uninstallAlias } from '../src/alias.js';
 
 test('aliasLine uses the right syntax per shell (explicit ref)', () => {
@@ -39,7 +39,7 @@ test('teamclaudeRef falls back to a quoted absolute path when not on PATH', asyn
     process.env.PATH = dir; // empty dir → no teamclaude
     const ref = teamclaudeRef();
     assert.match(ref, /^".*"$/);          // quoted
-    assert.ok(ref.includes('/'));          // an absolute-ish path, not the bare command
+    assert.ok(ref.includes(sep));          // an absolute-ish path, not the bare command
     assert.notEqual(ref, 'teamclaude');
   } finally {
     process.env.PATH = prev;
@@ -48,17 +48,18 @@ test('teamclaudeRef falls back to a quoted absolute path when not on PATH', asyn
 });
 
 test('rcPathForShell maps shells to their rc files', () => {
-  const prevHome = process.env.HOME;
+  // Pass the home rather than setting HOME: os.homedir() reads USERPROFILE on
+  // Windows, so setting HOME steered nothing and this asserted against the
+  // developer's own home directory.
   const prevXdg = process.env.XDG_CONFIG_HOME;
-  process.env.HOME = '/home/u';
   delete process.env.XDG_CONFIG_HOME;
+  const home = join('/home', 'u');
   try {
-    assert.equal(rcPathForShell('bash'), '/home/u/.bashrc');
-    assert.equal(rcPathForShell('zsh'), '/home/u/.zshrc');
-    assert.equal(rcPathForShell('sh'), '/home/u/.profile');
-    assert.equal(rcPathForShell('fish'), '/home/u/.config/fish/conf.d/teamclaude.fish');
+    assert.equal(rcPathForShell('bash', home), join(home, '.bashrc'));
+    assert.equal(rcPathForShell('zsh', home), join(home, '.zshrc'));
+    assert.equal(rcPathForShell('sh', home), join(home, '.profile'));
+    assert.equal(rcPathForShell('fish', home), join(home, '.config', 'fish', 'conf.d', 'teamclaude.fish'));
   } finally {
-    process.env.HOME = prevHome;
     if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = prevXdg;
   }

@@ -10,10 +10,10 @@ could not be measured is recorded as open rather than filled in with a guess.
 | | |
 | --- | --- |
 | Requirements | 18 functional, 27 non-functional — §4.1, §4.2 |
-| Assumptions | 43 — 14 measured, 8 source-read, 4 deferred, 17 unverified or false — §4.3 |
+| Assumptions | 44 — 15 measured, 8 source-read, 4 deferred, 17 unverified or false — §4.3 |
 | Constraints | 10 — §4.4 |
-| Risks | 8 rated, owned, with residual — §10 |
-| Measured findings | 18 — §2 |
+| Risks | 9 rated, owned, with residual — §10 |
+| Measured findings | 20 — §2 |
 | Backlog | 1 — egress IP, §5 |
 | Standards audit | [iso-audit.md](iso-audit.md) — 11 absent, 3 unclassified |
 | Tracked as issues | [#3](../../issues/3)–[#9](../../issues/9) |
@@ -149,6 +149,8 @@ no shell wrapper, no system trust-store installation. This was measured, not ass
 | **F16** | Does a **project**-scope `settings.json` reach a background agent? | **No** — the agent ran to completion with **zero** proxy traffic. It went direct | 2.1.223 |
 | **F17** | Does a **user**-scope `settings.json` reach a background agent? | **Yes** — 33 CONNECTs arrived, and none on the shell listener | 2.1.223 |
 | **F18** | Does the upstream allow one account in concurrent sessions? | **Yes** — five concurrent sessions observed on one account, several mid-request | production use |
+| **F19** | What does the MITM path cost under concurrent load? | **Steady state at 50-way concurrency: p50 23.5 ms, p99 37 ms, ≈2,100 req/s, 0 errors in 5,000.** The same shape direct is p50 3.4 ms, so the path adds ≈0.4 ms of CPU per request and the rest is queueing on one event loop. Establishment: 4.6 ms sequential; 50 at once all succeed, worst 103 ms. Inside an account's first 30 s the storm ramp (issue #84) paces admission **by design** — p99 322 ms, worst 1.2 s — then the tail collapses to the steady numbers | Windows 11, Node 24, loopback, mock upstream, one apikey account |
+| **F20** | Does an idle SSE stream survive concurrent churn? | **Yes — 30 of 30** streams idling 6 s mid-response completed with the gap intact (5.99–6.00 s observed) while 11,400 requests churned beside them; 0 errors on either side | same run as F19 |
 
 ### What F14–F17 settle: how the client must be configured
 
@@ -305,8 +307,8 @@ have put `R-8` in the repository twice meaning two different things.
 | **NFR-03** | Per-tenant CA private key held in a KMS; signing happens inside it | [#5](../../issues/5) |
 | **NFR-04** | Refresh tokens stored envelope-encrypted, never plaintext at rest | [#7](../../issues/7) |
 | **NFR-05** | Request-body logging off by default; when on, tenant-encrypted with short retention | §7 |
-| **NFR-06** | Edge adds no measurable latency — TLS termination or TCP passthrough both ≈0 | F07, F08 |
-| **NFR-07** | Survive long-lived SSE responses: no idle timeout below the client's own watchdogs | F07 (`proxy_timeout`) |
+| **NFR-06** | Edge adds no measurable latency — TLS termination or TCP passthrough both ≈0 | F07, F08, F19 |
+| **NFR-07** | Survive long-lived SSE responses: no idle timeout below the client's own watchdogs | F07 (`proxy_timeout`), F20 |
 | **NFR-08** | Per-tenant egress IP, not a shared NAT | §5 backlog |
 | **NFR-09** | Horizontal scaling without double-counting quota — tenant-sticky routing or externalised state | [#4](../../issues/4) |
 | **NFR-10** | Canary each new client release before adopting it as the floor | §8.4, F03, F06 |
@@ -366,7 +368,7 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-16** | A leaf swap needs no client action | ✅ **verified** — clients are handed `caPath` only (`src/index.js:648`, `:718`); a fresh leaf under the same CA validates with no client change |
 | **ASM-17** | An expiring certificate does not disturb work in flight | ✅ **measured** — an established TLS connection carried traffic 2s past `notAfter`; a new connection was refused with `CERT_HAS_EXPIRED`. TLS validates at handshake |
 | **ASM-18** | `~/.claude/settings.json` is plain JSON | ❌ **false** — a file containing a `//` comment was accepted and the session ran. `JSON.parse`/`stringify` would drop it silently, so FR-03.3's "preserve every unrelated key" is not sufficient |
-| **ASM-19** | The private-address list is complete | ✅ **true, as built** — was ❌ unverified: the spec named `127.0.0.0/8`, `169.254.169.254` and the 172.16–172.31 limits, which is a sample and not a set. `BLOCKED_RANGES` (`src/destination-policy.js`) now enumerates every IANA special-purpose range, each with the reason it is there, and the tests exercise both edges of each rather than one member per class (NFR-26) |
+| **ASM-19** | The private-address list is complete | ✅ **true, as built** — was ❌ unverified: the spec named `127.0.0.0/8`, `169.254.169.254` and the 172.16–172.31 limits, which is a sample and not a set. `BLOCKED_RANGES` (`src/destination-policy.js`) now enumerates every IANA special-purpose range, each with the reason it is there, and the tests exercise both edges of each rather than one member per class (NFR-26). An independent review then found a hole **beside** the list: the v4-in-v6 unwrap matched only the `::ffff:` marker, so `::169.254.169.254` and the NAT64 form walked past every range. All three wrappings are folded and table-tested now — the completeness of a list does not survive an incomplete normaliser in front of it |
 | **ASM-20** | A hostname resolves to addresses of one kind | ✅ **false, and handled** — `lookup(host, {all:true})` can return both, so the assumption was wrong. A name resolving to **any** blocked address is refused even when it also resolves to a permitted one (NFR-21.5); picking the public one would leave the refusal decidable by whichever answer came back first |
 | **ASM-21** | Allowlist entries are exact hostnames | ✅ **true, as built** — decided rather than assumed. Entries are exact and a wildcard is not honoured: `*.claude.ai` would admit any host an attacker can get named in that zone. A test asserts a wildcard entry matches nothing |
 | **ASM-22** | The certificate directory has one writer | ❌ **false, consequence removed** — `ensureCerts` is still called from the CLI (`src/index.js:648`, `:718`) as well as the server, so there is more than one writer. What it cost has gone: the server held a memo of the old chain and now re-reads, so a chain `teamclaude run` regenerates reaches a server that is already running. The interleaving itself is ASM-30 |
@@ -392,6 +394,7 @@ Status is measured, not asserted. An unverified assumption is marked as such.
 | **ASM-42** | The client's SSE watchdog thresholds are 180s / 300s | ⚠️ **deferred** — vendor documentation. NFR-07 sizes the edge timeout against numbers never observed here |
 | **ASM-43** | A `502` refusal would be a safe alternative | ❌ **measured false** — with the same body under `502` the client showed nothing immediately and retried, for a destination that will never be allowed. Retrying a policy decision is worse than reporting it |
 | **ASM-14** | The hosts observed on the wire are all the hosts a client needs | ❌ **unverified** — every observation came from `-p` and `--bg` runs (ASM-08). An allowlist built from an incomplete list refuses something a real session needs, and FR-07.5 exists to catch that before users do |
+| **ASM-44** | A server started by hand reaches the upstream directly | ❌ **measured false on an enrolled machine, and visible** — an enrolled shell exports `HTTPS_PROXY`, and `getUpstreamProxy` honours the environment by design, so a second instance started from that shell silently chains its upstream traffic through the proxy the machine is enrolled to. Found when the load probe's first run measured the live instance's latency instead of its own. The startup banner names it (`Upstream proxy: … (from HTTPS_PROXY)`) and `"upstreamProxy": false` opts out; a service-manager start is exempt because it never inherits the shell environment. Nothing yet refuses the self-referential case — a server handed its **own** address as its upstream proxy would relay to itself |
 
 ### 4.4 Constraints — CON
 
@@ -858,3 +861,6 @@ Recorded so they are not mistaken for the multi-environment results above:
   composed from what the client actually needs, not assumed from this one result.
 - **F12** — latency was compared on one network path. Useful as a direction, not a number
   to plan capacity from.
+- **F19** — one machine, loopback, one apikey account, bodies of a few hundred bytes. The
+  shape of the ceiling, not capacity to plan from: a WAN, response bodies at real sizes,
+  and OAuth refresh traffic all move it.

@@ -49,9 +49,15 @@ export function aliasLine(shell = detectShell(), ref = teamclaudeRef()) {
   return `alias claude='${body}'`;
 }
 
-/** The rc file an alias for this shell should live in. */
-export function rcPathForShell(shell = detectShell()) {
-  const home = homedir();
+/**
+ * The rc file an alias for this shell should live in.
+ *
+ * `home` is a parameter with a default, matching `launchAgentPath` in
+ * `service.js`. It was `homedir()` inline, which a test can only steer by
+ * setting `HOME` — and `os.homedir()` reads `USERPROFILE` on Windows, so the
+ * test steered nothing there and asserted against the developer's real home.
+ */
+export function rcPathForShell(shell = detectShell(), home = homedir()) {
   switch (shell) {
     case 'zsh':  return join(home, '.zshrc');
     case 'sh':   return join(home, '.profile');

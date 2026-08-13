@@ -994,6 +994,162 @@ that would have settled it in a line.
 
 ---
 
+## 2026-08-10 — the eight Windows failures were tests, not the product
+
+They were reported as *pre-existing, platform, identical on a clean master* every time the
+suite ran, and never diagnosed. That is an attribution, not a diagnosis, and it let a
+permanently red suite stay red on a developer’s own machine. **599 pass, 0 fail** now.
+
+| | |
+| --- | --- |
+| Closure | `m1-closure.md` §4 — the carried-over entry is closed |
+| Test | `alias`, `crash-log`, `server-listen-error`, `service` |
+| Src | `alias.js` — `rcPathForShell` takes `home`, matching `launchAgentPath` |
+| Others | n/a — no behaviour changed |
+
+### What each actually was
+
+| | |
+| --- | --- |
+| `server exits cleanly when the port is in use` | The fixture bound `listen(0)` with no host — IPv6 any, which covers IPv4 on Linux and **does not on Windows**. The port was never occupied, the proxy started correctly, and the test failed for “did not exit” when nothing had gone wrong. Bound to the interface under test it exits 1 with *Port N is already in use* |
+| `rcPathForShell` | The test set `HOME`; `os.homedir()` reads `USERPROFILE` on Windows, so it steered nothing and asserted against the real home directory |
+| `teamclaudeRef` | Asserted the path contains `/` |
+| crash-log × 3 | The child imported a Windows path as an ESM specifier, which is not one. It failed to load, exited 1 — which the first assertion accepted — and wrote nothing, so the log read as empty rather than wrong |
+| `service` × 2 | POSIX path shapes for a POSIX-only feature: `teamclaude service` answers *no service integration for win32*. Skipped, with that reason |
+
+### The one product change
+
+`rcPathForShell(shell, home = homedir())`. It read `homedir()` inline, so a test could only
+steer it through the environment — and on Windows that channel does not exist. `service.js`
+already took `home` as a parameter; this now matches.
+
+### Why it was worth doing
+
+A suite that is red on a developer’s own machine stops being read. Eight failures were
+carried through this entire milestone as background noise, and the one that looked most
+like a real defect — a server that would not exit on a listen error — was the one where the
+product was provably correct and the test never triggered it.
+
+---
+
+## 2026-08-10 — an independent review, and what it found
+
+Every line of M1 was written, tested, reviewed and merged by one author. A `qa-reviewer`
+read the seven source files at tag `m1` with no stake in them. It earned its place in the
+first finding.
+
+| | |
+| --- | --- |
+| Register | n/a — no requirement was wrong |
+| Test | `connect-policy`, `enrol`, `x509`, `remote-control-relay` |
+| Src | `destination-policy.js`, `enrol.js`, `x509.js`, `server.js` |
+| Others | n/a |
+
+### HIGH — an address form walked straight through
+
+`::169.254.169.254` — the deprecated IPv4-compatible spelling, the same sixteen bytes as
+`::ffff:169.254.169.254` apart from two marker octets — was **allowed**. `mappedV4` matched
+only the `ffff` marker.
+
+Reachable the way the file itself describes the threat: an allowlisted host whose AAAA
+record the operator does not control. Now three wrappings are folded — mapped, compatible,
+and the NAT64 well-known prefix — and a public address in any of them still passes.
+
+**The test was the textbook mistake this file warns about.** Three `::ffff:` spellings and
+nothing else, while the CIDR test three lines above says in a comment that one member per
+class passes while the boundary is wrong. The warning was applied to ranges and not to
+spellings. It is a table now.
+
+### MEDIUM — a duplicate key reported success and changed nothing
+
+`mergeSettingsEnv` updated the first occurrence; `JSON.parse` takes the last. A credential
+rotation against a hand-edited `settings.json` would report success and leave the old value
+in force — valid JSON, nothing thrown.
+
+Refused rather than repaired: a document with the same key twice has no single meaning to
+preserve, and preserving meaning is why this edits text instead of parsing. Duplicates
+outside `env` are not ours to judge, and a test says so.
+
+### LOW, and the one that bit back
+
+`safeKeyEqual` returned early on a length mismatch, so the comparison time carried the
+length of the configured key. Both sides are hashed first now.
+
+CA certificates carried no `pathLenConstraint`. Adding it as **0** broke every cross-signed
+succession with `PATH_LENGTH_EXCEEDED` — and **62 tests stayed green**, because each
+verified one link at a time and a chain is not the sum of its links. That gap was the
+review’s first test-weakness finding, written before the break happened.
+
+The missing test came first, then the value: `1`, which is the depth this PKI actually has
+— anchor, cross-signed successor, leaf. Two intermediates are refused, checked.
+
+### The flaky relay test
+
+Not a review finding, and carried as *pre-existing* since the milestone began. The upstream
+died on a 10ms timer that raced the client’s read of the 101; when the reset won there was
+nothing for the handshake assertion to match. It dies on the first relayed byte now: 8 runs,
+8 passes.
+
+### What this says about the milestone
+
+The retrospective already said *the checkers needed checking*. This is the same finding
+arriving from outside: the two defects that mattered were both invisible to a suite that
+looked thorough, and the more serious one had a comment three lines away describing exactly
+the mistake being made.
+
+---
+
+## 2026-08-13 — the load question answered, and two wrong measurements on the way
+
+NFR-06 and NFR-07 went through the gate on microbenchmarks (0.386 ms revalidation, one
+lookup per tunnel). Nothing had ever run the path under concurrency. A probe did: the real
+server, spawned out of process with a scratch config and an ephemeral port, a mock
+upstream in its own process, and a generator driving CONNECT + inner TLS + requests
+against both the proxied and the direct shape.
+
+| | |
+| --- | --- |
+| Register | §2 gains **F19** (cost under load) and **F20** (SSE beside churn) · NFR-06/NFR-07 sources now cite them · **ASM-44** added · ASM-19 grounds extended with the review's wrapping hole · header counts 18→20 findings, 43→44 assumptions, and the risks row corrected 8→9 (RSK-09 existed; the count had not moved) |
+| Test | n/a — measurement, not suite; the functional halves are already pinned by `streaming-through-policy` |
+| Src | n/a — nothing needed changing |
+| Others | `m1-closure.md` §4 relay row closed, §6 addendum |
+
+**What it measured.** Steady state at 50-way concurrency: p50 23.5 ms, p99 37 ms,
+≈2,100 req/s, 0 errors in 5,000 — direct to the same mock is p50 3.4 ms, so the MITM path
+adds ≈0.4 ms of CPU per request and the rest is event-loop queueing. Establishment 4.6 ms
+sequential; 50 concurrent all succeed (worst 103 ms) — the certificate lock ASM-30 worried
+about holds under a herd. 30 of 30 SSE streams idling 6 s completed with the gap intact
+while 11,400 requests churned beside them (F20 — NFR-07 under load, not just alone).
+
+**The tail that was design, not defect.** The first proxied batch showed p99 322 ms, worst
+1.2 s. That is the storm ramp (issue #84): the batch was the account's first use, so
+admission ramped 1 → +1/250 ms over 30 s while fifty clients polled at 50 ms. The second
+batch, run after the window, collapsed to p99 37 ms. An operator will see this tail on
+every failover burst; it is the price #84 chose, now with its size written down.
+
+**Two measurements were wrong before one was right** — §5 of the closure said measuring is
+a skill, and it kept being one:
+
+1. The scratch server inherited `HTTPS_PROXY` from this machine's **enrolled shell** and
+   chained every probe request through the live instance — the first run measured the
+   wrong server's latency, and 20,000 probe requests transited a service in real use
+   (relay path only; no account token, no quota). The startup banner named it, which is
+   how it was caught. Recorded as **ASM-44**, because "a hand-started server reaches
+   upstream directly" was an assumption nobody had written down; the self-referential
+   case (a server handed its own address) is still unguarded.
+2. The rewritten probe then "found" a stall: SSE tails never arrived, 0 of 30 streams
+   completed. Two hours of tracing — `NODE_DEBUG`, a four-way bisect against the M1
+   harness — ended at the probe's own mock: it read the request body, and a consumed
+   `IncomingMessage` emits `close` on consumption, not on disconnect, so the mock's
+   cleanup handler cancelled its own completion timer. The product streamed correctly the
+   whole time. The "partial frame" that made it look transport-level was the debug
+   print's own `slice(0, 200)`.
+
+Neither wrong run was kept. Both are recorded because each looked like a product defect
+for an hour, and the next person measuring will meet at least one of them.
+
+---
+
 ## Open at the end of this sweep
 
 | | |
@@ -1018,7 +1174,7 @@ cold. ISO 21500 wants both directions.
 | --- | --- |
 | `docs/saas-requirements.md` §4.1 FR | FR-16.3 ← ASM-27 · FR-18 ← ASM-13, F16 |
 | §4.2 NFR | NFR-17.5 ← ASM-15 · NFR-21.5 ← ASM-20 · NFR-21.6 ← ASM-19 · NFR-20/21 ← the SSRF read of `mitm.js` · NFR-22 ← ASM-10 · NFR-23 ← G-1 audit · NFR-24 ← ASM-36 · NFR-25 ← no threat model · NFR-26/27 ← ISO 29119 audit |
-| §4.3 ASM | 43 entries; 14 measured here, 8 read from source, 4 deferred to vendor documentation |
+| §4.3 ASM | 44 entries; 15 measured here, 8 read from source, 4 deferred to vendor documentation |
 | §4.4 CON | CON-09 narrowed ← `mitm.js:204` logs the destination · CON-01/04 reclassified deferred ← ASM-35, ASM-36 |
 | §7 Data protection | Two rows marked *not today* ← ASM-37 (buffers held across retries), ASM-38 (crash stacks) |
 | §9 Asset inventory | Exists at all ← ISO 27001 F-1 and ISO 42010 H-1 reaching the same gap · crash log row ← ASM-24 · quota state reclassified ← ASM-26 · retention marked a target ← ASM-25 |
@@ -1047,6 +1203,7 @@ cold. ISO 21500 wants both directions.
 | `src/index.js` enrol/unenrol | Exist at all ← NFR-13.2 needing a command to document · the exit code ← `process.exit(0)` swallowing a usage failure |
 | `src/destination-policy.js` | Exists at all ← S1 · the verdict carrying the address ← NFR-21.2 · the enumerated range list ← NFR-21.6 and ASM-19 · every default derived from `proxy.host` ← criterion 13 and three failing blind-tunnel tests · `SHIPPED_ALLOW` ← FR-07.5, measured · `pinnedLookup` ← a v6/v4 fallback regression |
 | `test/requirements-coverage.test.js` (again) | *a task owns the files its criteria name* ← task-1's scope defect · the overlap guard skipping done tasks ← task-2 needing a file task-1 had finished with |
+| §2 F19, F20 · ASM-44 · NFR-06/07 sources | the post-closure load measurement (2026-08-13) · ASM-44 ← the probe's first run chaining through the live instance |
 
 **Reading it.** A left-hand entry with no right-hand source is a line nobody can explain,
 which is how the first register was built and why the audit found eleven gaps in it.
