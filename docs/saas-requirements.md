@@ -21,6 +21,13 @@ could not be measured is recorded as open rather than filled in with a guess.
 
 ---
 
+> **M1 is closed.** The gate decision, the baseline it fixes, and what the process got
+> wrong are in [`plans/m1-closure.md`](plans/m1-closure.md). Several requirements **changed
+> during** M1 — FR-16.2 and FR-18 were reworded against measurements, two hardening
+> defaults were inverted, CON-05 was realised, and NFR-17.6, NFR-17.7 and RSK-09 were
+> added. Anything reading this register from before that point is reading a different
+> specification.
+
 ## 0. Purpose and goals
 
 ### Purpose
@@ -396,7 +403,7 @@ Fixed properties of the design or its environment. Not problems to solve — bou
 | **CON-02** | Terminating TLS in the cloud puts every prompt and file in server memory as plaintext; the body is buffered whole so it can be replayed on another account | Unavoidable. Drives NFR-04, NFR-05, NFR-11 and the legal review in §7 |
 | **CON-03** | One request fires before `settings.json` is read | Only the shell `export` covers it — hence FR-03 requiring both |
 | **CON-04** | Cloud sessions ignore `NODE_EXTRA_CA_CERTS` and the client-certificate variables | Claude Code on the web cannot be routed through the service; support the local CLI only |
-| **CON-05** | Issuing leaves server-side requires persisting a CA private key | A regression against the local design, which discards it. Bounded by NFR-03 |
+| **CON-05** | Issuing leaves server-side requires persisting a CA private key | **Realised 2026-08-10.** A regression against the local design, which discarded it — and unavoidable: without the key a leaf renewal has to mint a new CA, and every enrolled device stops verifying. Bounded by NFR-03 (KMS from M2) and by RSK-09 |
 | **CON-06** | Users upload their own refresh tokens to a third party | A grey area under the consumer terms. **Does not arise when self-hosted.** Otherwise mitigate with explicit consent and NFR-11; needs legal review |
 | **CON-07** | The quota belongs to the accounts, not to the service | The product redistributes; it cannot create headroom. Everything rests on rotation clearing a limit (G-5, ASM-09) |
 | **CON-08** | No revenue | NFR-03, NFR-08 and NFR-15 all carry ongoing cost against donations. Either the community-hosted mode is scoped to what a volunteer can carry, or it is not offered |
@@ -428,7 +435,7 @@ Which of the above already exist in the codebase.
 | --- | --- | --- | --- |
 | Config store | one file, process-wide lock | per-tenant store, distributed lock | [#4](../../issues/4) |
 | `AccountManager` | a single instance | per-tenant instance and lifecycle | [#4](../../issues/4) |
-| CA | one global chain, **CA key discarded** | per-tenant, key in a KMS | [#5](../../issues/5) |
+| CA | one global chain, **key held on disk (0600)** so leaves are re-signed under it and successors are cross-signed | per-tenant, key in a KMS | [#5](../../issues/5) |
 | Path classification | 3 exceptions, everything else rotates | only inference rotates | [PR #2](../../pull/2) |
 | CONNECT targets | blind tunnel by default | upstream host allowlist | [#8](../../issues/8) |
 | Test-host intercept | answers for a real public domain | remove | [#8](../../issues/8) |
@@ -710,7 +717,7 @@ the gap: nothing deletes a request log. The column is a target until NFR-05 land
 | --- | --- | --- | --- | --- |
 | OAuth refresh tokens | Config store, at rest | **critical** | Life of the account registration; destroyed on offboarding | NFR-04 envelope encryption, NFR-11 audit, FR-14 deletion |
 | OAuth access tokens | Memory; written back on refresh | **critical** | Until expiry | NFR-04 |
-| Tenant CA private key | KMS from M2; discarded today (`src/mitm.js:83`) | **critical** | Life of the tenant | NFR-03 |
+| CA private key | **On disk, 0600, on the proxy host.** It was discarded at issuance until 2026-08-10; keeping it is what lets a leaf renewal leave the CA alone, and what lets a successor be cross-signed so enrolled devices survive a rotation. Without it every renewal minted a new CA and every device stopped verifying — measured. KMS from M2 ([#5](../../issues/5)) | **critical** — whoever holds it can issue a certificate for any host the enrolled devices trust this CA for | Life of the CA (3650 days by default; `proxy.certs.caDays`) | NFR-03, NFR-17.6, NFR-17.7 |
 | Device private key | The user's own machine only | high | Life of the device | FR-16.1 owner-only permissions |
 | Proxy API key | Config store | high | Until rotated — **no rotation path today** | NFR-17, [#24](../../issues/24) |
 | **Prompt and file content** | Server memory, in plaintext, buffered whole | **critical** | Discarded after the response — **not persisted** | CON-02, NFR-05 logging off by default |
@@ -753,6 +760,7 @@ by a statement of what the treatment leaves behind (B-1, B-2, B-3).
 | **RSK-06** | Plaintext prompts in server memory are disclosed | L | **H** | NFR-05 logging off, NFR-15 incident process, short retention | **Unavoidable while TLS terminates in the cloud** (CON-02) | Operator | On any incident; M4 gate |
 | **RSK-07** | An operator deliberately opens a hardening switch and is compromised | L | M | Defaults derive from `proxy.host`, so the unsafe state needs intent | **No guard rail against the deliberate case** | Operator | — |
 | **RSK-08** | Donations do not cover KMS, dedicated egress and on-call | **H** | M | Scope M4 to what a volunteer can carry, or do not offer hosting | This is the M4 gate, not a risk to mitigate away | Owner | M4 gate |
+| **RSK-09** | The CA private key on the proxy host is read by someone who should not have it | L | **H** | 0600, on the host that already holds the account tokens and the leaf key — a host that is compromised is already lost, so this is an escalation rather than a new door. What it adds is duration: the leaf key expires in 90 days, the CA key in 3650. Recovery is re-enrolment, not rotation, because a successor cross-signed by a stolen key is worth nothing. Name constraints would bound it to the intercepted hosts — measured to work, not implemented | Reduced but present: the key exists where it did not before, and nothing yet limits what it may sign | Operator | Whenever `proxy.certs.caDays` changes |
 
 **RSK-04 is the one to act on.** It is the only high-impact risk with no treatment at all, and
 its failure mode is silence — rotation degrades and nothing reports it. RSK-03 at least

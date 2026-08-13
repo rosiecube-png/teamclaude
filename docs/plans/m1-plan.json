@@ -484,7 +484,13 @@
         "RSK-01 (M/H) — limits key on the egress IP, so pooling yields no multiple; observable once M1 runs",
         "RSK-02 (M/M) — the allowlist refuses a host a real session needs; composed from -p and --bg observations only",
         "RSK-08 (H/M) — donations do not cover KMS, dedicated egress and on-call; this is the M4 gate, not a risk to mitigate away",
-        "RSK-07 (L/M) — an operator deliberately opens a hardening switch; defaults guard omission, not intent"
+        "RSK-07 (L/M) — an operator deliberately opens a hardening switch; defaults guard omission, not intent",
+        {
+          "id": "RSK-09",
+          "risk": "The CA private key on the proxy host is read by someone who should not have it",
+          "likelihood": "L",
+          "impact": "H"
+        }
       ],
       "treatments": [
         "RSK-03 — NFR-10 canary widened per ASM-40; NFR-22 isolates the tracking code; NFR-17.5 makes a fix deployable",
@@ -494,7 +500,12 @@
         "RSK-01 — egress.pin and sx.mode already exist; residual is metered bandwidth against donations",
         "RSK-02 — FR-07.5 composes the allowlist by running a client and recording refusals",
         "RSK-08 — scope M4 to what a volunteer can carry, or do not offer hosting",
-        "RSK-07 — defaults derive from proxy.host so the unsafe state needs intent (NFR-20)"
+        "RSK-07 — defaults derive from proxy.host so the unsafe state needs intent (NFR-20)",
+        {
+          "id": "RSK-09",
+          "treatment": "0600 on a host that already holds the account tokens and the leaf key, so this is an escalation of duration rather than a new door: the leaf key lasts 90 days, the CA key 3650. Recovery is re-enrolment, not rotation. Name constraints would bound what it may sign — measured, not implemented",
+          "residual": "Reduced but present: the key exists where it did not before, and nothing yet limits what it may sign"
+        }
       ],
       "register": "docs/saas-requirements.md §10 — RSK-01 … RSK-08, rated with owner and residual"
     },
@@ -508,7 +519,19 @@
       ],
       "removed_from_approval": [
         "Certificate lifetimes (NFR-17.4) — a leaf swap needs no client action (ASM-16, verified), so nothing competes with a short lifetime; 90/30 follows from NFR-17.5"
-      ]
+      ],
+      "milestone_gate": {
+        "milestone": "M1",
+        "decision": "accepted",
+        "decided_by": "the account owner, who is also the operator and the only stakeholder at this milestone",
+        "exit_criteria": {
+          "G-1": "met — G1-OK through a proxy on another host, 0 teamclaude processes on the machine",
+          "G-6": "met — unenrol against an unreachable proxy restored direct operation, G6-OK",
+          "G-5": "not claimed; §6 asks only that it become observable, and ASM-09 stays in the backlog (#3)"
+        },
+        "caveat": "G-6 legibility holds by the letter of NFR-13.1, but a proxy that is simply down produces silence: exit 124, zero bytes. Client behaviour, not ours",
+        "record": "docs/plans/m1-closure.md"
+      }
     }
   },
   "revalidated": {
